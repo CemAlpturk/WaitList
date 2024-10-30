@@ -64,16 +64,26 @@ class ProductViewModel: ObservableObject {
     }
 
     func scheduleNotification(for product: Product) {
-        let content = UNMutableNotificationContent()
-        content.title = "Re-evaluate your purchase"
-        content.body = "It's time to re-evaluate buying '\(product.name)'."
+            let content = UNMutableNotificationContent()
+            content.title = "Re-evaluate your purchase"
+            content.body = "It's time to re-evaluate buying '\(product.name)'."
 
-        let triggerDate = Calendar.current.dateComponents([.year, .month, .day], from: product.deadline)
-        let trigger = UNCalendarNotificationTrigger(dateMatching: triggerDate, repeats: false)
+            // Add the image attachment
+            if let imageURL = Bundle.main.url(forResource: "Waitlist", withExtension: "png") {
+                do {
+                    let attachment = try UNNotificationAttachment(identifier: "imageAttachment", url: imageURL, options: nil)
+                    content.attachments = [attachment]
+                } catch {
+                    print("Error attaching image to notification: \(error)")
+                }
+            }
 
-        let request = UNNotificationRequest(identifier: product.id.uuidString, content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
-    }
+            let triggerDate = Calendar.current.dateComponents([.year, .month, .day], from: product.deadline)
+            let trigger = UNCalendarNotificationTrigger(dateMatching: triggerDate, repeats: false)
+
+            let request = UNNotificationRequest(identifier: product.id.uuidString, content: content, trigger: trigger)
+            UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+        }
 
     func removeNotifications(for products: [Product]) {
         let identifiers = products.map { $0.id.uuidString }
