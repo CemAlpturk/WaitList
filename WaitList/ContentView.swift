@@ -33,13 +33,14 @@ struct ContentView: View {
             }
             .frame(minWidth: 300, minHeight: 300)
 
-            Divider() // Adds a visual separator between the list and buttons
+            Divider()
 
             HStack {
                 Button(action: {
                     showingAddProduct.toggle()
                 }) {
-                    Text("Add Product")
+                    Label("Add Product", systemImage: "plus")
+                        .fontWeight(.semibold)
                 }
                 .sheet(isPresented: $showingAddProduct) {
                     AddProductView(viewModel: viewModel)
@@ -50,8 +51,9 @@ struct ContentView: View {
                 Button(action: {
                     quitApp()
                 }) {
-                    Text("Quit App")
+                    Label("Quit App", systemImage: "power")
                         .foregroundColor(.red)
+                        .fontWeight(.semibold)
                 }
             }
             .padding()
