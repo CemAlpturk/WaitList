@@ -2,7 +2,7 @@
 
 **WaitList** is a simple and intuitive macOS menubar app designed to help you combat impulse buying. By encouraging a waiting period before making non-essential purchases, WaitList assists you in making more mindful spending decisions.
 
-![WaitList Icon](WaitList/Assets/Waitlist.png)
+![WaitList Icon](./Screenshots/icon.png)
 
 ## Table of Contents
 
@@ -59,10 +59,10 @@
 
 ## Screenshots
 
-![WaitList Menubar View](./Screenshots/menu.png)
+![WaitList Menubar View](./Screenshots/menu.png) \
 *WaitList showing active items and remaining days.*
 
-![Notification View](./Screenshots/notification.png)
+![Notification View](./Screenshots/notification.png) \
 *Notification when waiting period is over.*
 
 ## License
