@@ -18,7 +18,7 @@ struct ContentView: View {
                     HStack {
                         Text(product.name)
                         Spacer()
-                        Text("\(product.daysLeft) days left")
+                        Text("\(product.daysLeft()) days left")
                             .foregroundColor(.gray)
                         Button(action: {
                             deleteProduct(product)

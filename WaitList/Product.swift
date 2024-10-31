@@ -12,7 +12,7 @@ struct Product: Identifiable, Codable {
     let name: String
     let deadline: Date
 
-    var daysLeft: Int {
+    func daysLeft() -> Int {
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: Date())
         let end = calendar.startOfDay(for: deadline)
@@ -21,6 +21,6 @@ struct Product: Identifiable, Codable {
     }
 
     var isActive: Bool {
-        return daysLeft >= 0
+        return daysLeft() > 0
     }
 }
