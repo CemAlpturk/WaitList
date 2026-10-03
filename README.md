@@ -41,6 +41,10 @@ Version 2.0 is a rewrite from scratch. Items saved by WaitList 1.x are imported 
 
 WaitList needs **macOS 14 Sonoma or later**.
 
+**From source** (needs only Command Line Tools, see [Building from Source](#building-from-source)): clone the repo and run `make install`. It builds a release bundle, copies it to `/Applications` and launches it. Since the app is built on your Mac, no security warning appears.
+
+**From a release:**
+
 1. **Download the Latest Release**: Get the `WaitList.zip` file from the [Releases](https://github.com/CemAlpturk/WaitList/releases) page.
 
 2. **Unzip the File**: Double-click the downloaded `.zip` file to extract `WaitList.app`.
