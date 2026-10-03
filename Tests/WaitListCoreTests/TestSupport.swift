@@ -51,6 +51,10 @@ extension XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         addTeardownBlock {
             UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+            // removePersistentDomain leaves an empty plist in ~/Library/Preferences; delete it too.
+            let plist = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+            try? FileManager.default.removeItem(at: plist)
         }
         return defaults
     }
