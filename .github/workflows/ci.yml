@@ -9,6 +9,10 @@ on:
 jobs:
   build:
     runs-on: macos-15
+    permissions:
+      contents: write   # the Release step attaches WaitList.zip to a GitHub Release
+    env:
+      UNIVERSAL: 1      # make app / make release build one binary for Apple silicon and Intel
     steps:
       - uses: actions/checkout@v4
       - name: Swift version

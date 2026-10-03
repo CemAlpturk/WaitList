@@ -154,16 +154,33 @@ final class DebugCommandsTests: XCTestCase {
         XCTAssertTrue(output.stderr.hasPrefix("WaitList: could not add debug item: "), output.stderr)
     }
 
-    /// Main.swift:91 only checks that the seconds are finite. A date before the year 0 is written as
-    /// "-29662-..." which the ISO 8601 decoder rejects, so the next load finds an "unreadable" file and
-    /// moves it aside, along with the user's other items.
-    func testKnownIssueHugeNegativeSecondsWriteAFileThatCannotBeReadBack() throws {
-        let (added, _) = try captureOutput {
-            DebugCommands.addItem(named: "Ancient", dueIn: -1e12, location: .override(fileURL))
+    /// A date before the year 0 would be written as "-29662-...", which the loader rejects, so the next launch
+    /// would move the whole file (with the user's other items) aside. Such values are refused up front.
+    func testAddItemRefusesDueTimesMoreThanTenYearsAway() throws {
+        let existing = sampleItems()
+        try persistence.save(existing)
+        let before = try Data(contentsOf: fileURL)
+
+        for seconds in [-1e12, 1e12, LaunchOptions.debugAddMaxSeconds + 1, -.infinity, .nan] {
+            let (added, output) = try captureOutput {
+                DebugCommands.addItem(named: "Ancient", dueIn: seconds, location: .override(fileURL))
+            }
+            XCTAssertFalse(added, "\(seconds)")
+            XCTAssertEqual(output.stderr, "WaitList: due time out of range (more than 10 years away), nothing added.\n")
+            XCTAssertEqual(output.stdout, "")
         }
-        XCTExpectFailure("addItem accepts any finite seconds and saves a decideAt the loader rejects") {
-            XCTAssertTrue(!added || (try? persistence.load()) != nil, "added=\(added), but the file cannot be loaded")
+        XCTAssertEqual(try Data(contentsOf: fileURL), before, "the file is untouched")
+        XCTAssertEqual(try persistence.load(), existing)
+    }
+
+    func testAddItemAtTheTenYearLimitCanBeReadBack() throws {
+        for seconds in [LaunchOptions.debugAddMaxSeconds, -LaunchOptions.debugAddMaxSeconds] {
+            let (added, _) = try captureOutput {
+                DebugCommands.addItem(named: "Far", dueIn: seconds, location: .override(fileURL))
+            }
+            XCTAssertTrue(added)
         }
+        XCTAssertEqual(try persistence.load().count, 2)
     }
 
     // MARK: dumpItems

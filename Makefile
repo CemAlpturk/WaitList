@@ -7,7 +7,7 @@ APP = build/WaitList.app
 build:            ## Compile with SwiftPM
 	swift build -c $(CONFIG)
 
-app:              ## Assemble $(APP)
+app:              ## Assemble $(APP); UNIVERSAL=1 builds arm64 + x86_64 (needs Xcode)
 	Packaging/build-app.sh $(CONFIG)
 
 run: stop app     ## Build and launch the app
@@ -19,7 +19,7 @@ stop:             ## Quit a running WaitList
 test:             ## Run unit tests
 	swift test
 
-icon:             ## Regenerate app icon + menubar glyphs from Tools/
+icon:             ## Regenerate app icon + menubar glyphs (Resources/) and Screenshots/icon.png from Tools/
 	swift Tools/make-icon.swift
 
 release: app      ## Zip for distribution

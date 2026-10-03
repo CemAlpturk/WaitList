@@ -21,7 +21,9 @@ public enum NotificationPlan {
         item.id.uuidString
     }
 
-    /// Title/body for the "still want it?" notification. Body mentions the name, the days waited and the price when known, e.g. "You waited 14 days for “Gorilla Sofa” (1 299 kr). Still want it?"
+    /// Title/body for the "still want it?" notification. Body mentions the name, the days waited and the price
+    /// when known, e.g. "You waited 14 days for “Gorilla Sofa” (1 299 kr). Still want it?" The price is
+    /// formatted exactly as in the app (`PriceFormat.string`).
     public static func content(for item: Item, now: Date, currencyCode: String,
                                calendar: Calendar = .current) -> (title: String, body: String) {
         let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -29,7 +31,7 @@ public enum NotificationPlan {
 
         var subject = "“\(name)”"
         if let price = item.price {
-            subject += " (\(price.formatted(.currency(code: currencyCode))))"
+            subject += " (\(PriceFormat.string(price, currencyCode: currencyCode)))"
         }
 
         let waited: String

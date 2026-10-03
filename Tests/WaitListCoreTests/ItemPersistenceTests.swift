@@ -132,11 +132,102 @@ final class ItemPersistenceTests: XCTestCase {
         XCTAssertEqual(try contents(of: directory), ["items.json"], "no backup should be made")
     }
 
+    /// Checks the path only: calling `defaultFileURL()` would create the real
+    /// ~/Library/Application Support/WaitList folder.
     func testDefaultFileURLIsInApplicationSupport() throws {
-        let url = try FileItemPersistence.defaultFileURL()
+        let support = try XCTUnwrap(FileManager.default.urls(for: .applicationSupportDirectory,
+                                                              in: .userDomainMask).first)
+        let url = FileItemPersistence.fileURL(inApplicationSupport: support)
         XCTAssertEqual(url.lastPathComponent, "items.json")
         XCTAssertEqual(url.deletingLastPathComponent().lastPathComponent, "WaitList")
-        XCTAssertTrue(url.path.contains("Application Support"), url.path)
+        XCTAssertEqual(url.deletingLastPathComponent().deletingLastPathComponent(), support)
+        XCTAssertTrue(url.path.hasSuffix("/Library/Application Support/WaitList/items.json"), url.path)
+    }
+
+    func testFileURLInApplicationSupportCreatesNothing() throws {
+        let support = try makeTempDirectory()
+        let url = FileItemPersistence.fileURL(inApplicationSupport: support)
+        XCTAssertEqual(url.path, support.appendingPathComponent("WaitList/items.json").path)
+        XCTAssertEqual(try contents(of: support), [])
+    }
+
+    // MARK: Lenient dates
+
+    private func writeItemsFile(_ url: URL, createdAt: String, decideAt: String) throws {
+        let json = """
+        {"version": 1, "items": [{"id": "6F2C1B0E-4F0A-4C1E-9C55-3D8E7A0B1C2D", "name": "Hand edited",
+          "createdAt": "\(createdAt)", "decideAt": "\(decideAt)"}]}
+        """
+        try Data(json.utf8).write(to: url)
+    }
+
+    func testDatesWithFractionalSecondsLoad() throws {
+        let directory = try makeTempDirectory()
+        let fileURL = directory.appendingPathComponent("items.json")
+        try writeItemsFile(fileURL, createdAt: "2026-10-03T08:00:00.250Z", decideAt: "2026-10-17T07:00:00.5Z")
+
+        let item = try XCTUnwrap(try FileItemPersistence(fileURL: fileURL).load().first)
+
+        XCTAssertEqual(item.createdAt, TestDates.date(2026, 10, 3, 10, 0).addingTimeInterval(0.25))
+        XCTAssertEqual(item.decideAt, TestDates.date(2026, 10, 17, 9, 0).addingTimeInterval(0.5))
+        XCTAssertEqual(try contents(of: directory), ["items.json"], "nothing was moved aside")
+    }
+
+    func testDatesWithAnOffsetLoad() throws {
+        let directory = try makeTempDirectory()
+        let fileURL = directory.appendingPathComponent("items.json")
+        try writeItemsFile(fileURL, createdAt: "2026-10-03T10:00:00+02:00", decideAt: "2026-10-17T09:00:00.000+02:00")
+
+        let item = try XCTUnwrap(try FileItemPersistence(fileURL: fileURL).load().first)
+
+        XCTAssertEqual(item.createdAt, TestDates.date(2026, 10, 3, 10, 0))
+        XCTAssertEqual(item.decideAt, TestDates.date(2026, 10, 17, 9, 0))
+    }
+
+    func testSavedDatesAreStillWholeSecondsUTC() throws {
+        let directory = try makeTempDirectory()
+        let fileURL = directory.appendingPathComponent("items.json")
+        let item = Item(name: "Lamp", createdAt: TestDates.date(2026, 10, 3, 10, 0).addingTimeInterval(0.25),
+                        decideAt: TestDates.date(2026, 10, 17, 9, 0))
+        try FileItemPersistence(fileURL: fileURL).save([item])
+
+        let text = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertTrue(text.contains("\"createdAt\" : \"2026-10-03T08:00:00Z\""), text)
+    }
+
+    func testDatesThatAreNotISO8601StillMakeTheFileCorrupt() throws {
+        let directory = try makeTempDirectory()
+        let fileURL = directory.appendingPathComponent("items.json")
+        try writeItemsFile(fileURL, createdAt: "3 October 2026", decideAt: "2026-10-17T07:00:00Z")
+
+        XCTAssertThrowsError(try FileItemPersistence(fileURL: fileURL).load()) { error in
+            guard case PersistenceError.corruptFile? = error as? PersistenceError else {
+                return XCTFail("Unexpected error \(error)")
+            }
+        }
+    }
+
+    // MARK: Unreadable file that cannot be moved
+
+    func testCorruptFileInAReadOnlyFolderIsLeftInPlace() throws {
+        let directory = try makeTempDirectory()
+        let folder = directory.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let fileURL = folder.appendingPathComponent("items.json")
+        let garbage = Data("this is not json {".utf8)
+        try garbage.write(to: fileURL)
+        // r-x: the file can be read, but nothing in the folder can be renamed.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        }
+
+        XCTAssertThrowsError(try FileItemPersistence(fileURL: fileURL).load()) { error in
+            XCTAssertEqual(error as? PersistenceError, .corruptFileNotMoved(fileURL))
+            XCTAssertTrue(error.localizedDescription.contains("left untouched"), error.localizedDescription)
+        }
+        XCTAssertEqual(try Data(contentsOf: fileURL), garbage)
+        XCTAssertEqual(try contents(of: folder), ["items.json"])
     }
 
     // MARK: InMemoryItemPersistence

@@ -51,6 +51,34 @@ final class ItemTests: XCTestCase {
         XCTAssertEqual(item.daysLeft(at: TestDates.date(2026, 10, 17, 0, 1), calendar: calendar), 0)
     }
 
+    /// Europe/Stockholm: 2026-03-29 has 23 hours (summer time starts) and 2026-10-25 has 25 (it ends).
+    /// Days are counted between midnights, so neither day counts as more or less than one.
+    func testDaysLeftAcrossDaylightSavingChanges() {
+        let spring = makeItem(decideAt: TestDates.date(2026, 3, 30, 9, 0))
+        XCTAssertEqual(spring.daysLeft(at: TestDates.date(2026, 3, 28, 9, 0), calendar: calendar), 2)
+        XCTAssertEqual(spring.daysLeft(at: TestDates.date(2026, 3, 28, 23, 30), calendar: calendar), 2)
+        XCTAssertEqual(spring.daysLeft(at: TestDates.date(2026, 3, 29, 0, 30), calendar: calendar), 1)
+        XCTAssertEqual(spring.daysLeft(at: TestDates.date(2026, 3, 29, 23, 59), calendar: calendar), 1)
+        XCTAssertEqual(spring.daysLeft(at: TestDates.date(2026, 3, 30, 0, 0), calendar: calendar), 0)
+
+        let autumn = makeItem(decideAt: TestDates.date(2026, 10, 26, 9, 0))
+        XCTAssertEqual(autumn.daysLeft(at: TestDates.date(2026, 10, 24, 9, 0), calendar: calendar), 2)
+        XCTAssertEqual(autumn.daysLeft(at: TestDates.date(2026, 10, 25, 0, 30), calendar: calendar), 1)
+        // 02:30 happens twice on 2026-10-25; both are on the 25th.
+        let firstHalfPastTwo = TestDates.date(2026, 10, 25, 1, 30).addingTimeInterval(3_600)
+        let secondHalfPastTwo = firstHalfPastTwo.addingTimeInterval(3_600)
+        XCTAssertEqual(autumn.daysLeft(at: firstHalfPastTwo, calendar: calendar), 1)
+        XCTAssertEqual(autumn.daysLeft(at: secondHalfPastTwo, calendar: calendar), 1)
+        XCTAssertEqual(autumn.daysLeft(at: TestDates.date(2026, 10, 25, 23, 59), calendar: calendar), 1)
+        XCTAssertEqual(autumn.daysLeft(at: TestDates.date(2026, 10, 26, 8, 59), calendar: calendar), 0)
+    }
+
+    func testDaysLeftOverAFullWeekContainingTheChange() {
+        let item = makeItem(decideAt: TestDates.date(2026, 10, 29, 9, 0))
+        XCTAssertEqual(item.daysLeft(at: TestDates.date(2026, 10, 22, 9, 0), calendar: calendar), 7)
+        XCTAssertEqual(item.daysLeft(at: TestDates.date(2026, 10, 22, 23, 59), calendar: calendar), 7)
+    }
+
     func testDaysLeftIsNeverNegative() {
         let item = makeItem(decideAt: TestDates.date(2026, 10, 17, 9, 0))
         XCTAssertEqual(item.daysLeft(at: TestDates.date(2026, 10, 20, 12, 0), calendar: calendar), 0)

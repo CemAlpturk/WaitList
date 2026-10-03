@@ -342,6 +342,56 @@ final class ItemStoreTests: XCTestCase {
         XCTAssertEqual(f.persistence.items, f.store.items)
     }
 
+    /// At 10:00 the user moves the reminder from 09:00 to 18:00: an item that became due at 09:00 stays due.
+    func testRetimeLeavesItemsThatAreAlreadyDue() throws {
+        let dueToday = Item(name: "Due today", createdAt: TestDates.date(2026, 9, 19, 9, 0),
+                            decideAt: TestDates.date(2026, 10, 3, 9, 0))
+        let dueLastWeek = Item(name: "Due last week", createdAt: TestDates.date(2026, 9, 1, 9, 0),
+                               decideAt: TestDates.date(2026, 9, 26, 9, 0))
+        let tomorrow = Item(name: "Tomorrow", createdAt: TestDates.date(2026, 9, 20, 9, 0),
+                            decideAt: TestDates.date(2026, 10, 4, 9, 0))
+        let f = try makeFixture(items: [dueToday, dueLastWeek, tomorrow])   // now: 2026-10-03 10:00
+
+        f.store.retimeUndecided(to: DateComponents(hour: 18, minute: 0))
+
+        XCTAssertEqual(f.store.item(dueToday.id), dueToday)
+        XCTAssertEqual(f.store.item(dueLastWeek.id), dueLastWeek)
+        XCTAssertEqual(f.store.due.map(\.id), [dueLastWeek.id, dueToday.id])
+        XCTAssertEqual(f.store.item(tomorrow.id)?.decideAt, TestDates.date(2026, 10, 4, 18, 0))
+    }
+
+    /// At 10:00 the user moves the reminder from 18:00 to 09:00: an item due at 18:00 today would become due
+    /// at once (with no notification), so it keeps 18:00. Later items move to 09:00.
+    func testRetimeNeverMakesAWaitingItemDueAtOnce() throws {
+        let laterToday = Item(name: "Later today", createdAt: TestDates.date(2026, 9, 19, 18, 0),
+                              decideAt: TestDates.date(2026, 10, 3, 18, 0))
+        let tomorrow = Item(name: "Tomorrow", createdAt: TestDates.date(2026, 9, 20, 18, 0),
+                            decideAt: TestDates.date(2026, 10, 4, 18, 0))
+        let f = try makeFixture(items: [laterToday, tomorrow])   // now: 2026-10-03 10:00
+
+        f.store.retimeUndecided(to: DateComponents(hour: 9, minute: 0))
+
+        XCTAssertEqual(f.store.item(laterToday.id), laterToday)
+        XCTAssertEqual(f.store.waiting.map(\.id), [laterToday.id, tomorrow.id])
+        XCTAssertEqual(f.store.due, [])
+        XCTAssertEqual(f.store.item(tomorrow.id)?.decideAt, TestDates.date(2026, 10, 4, 9, 0))
+
+        // Retiming to a time still ahead today does move it.
+        f.store.retimeUndecided(to: DateComponents(hour: 11, minute: 30))
+        XCTAssertEqual(f.store.item(laterToday.id)?.decideAt, TestDates.date(2026, 10, 3, 11, 30))
+    }
+
+    func testRetimeUsesTheStoredNow() throws {
+        let f = try makeFixture()
+        let item = f.store.add(name: "Sofa", price: nil, note: nil, waitDays: 1)   // 2026-10-04 09:00
+        f.store.refresh(now: TestDates.date(2026, 10, 4, 10, 0))                  // due since 09:00
+
+        f.store.retimeUndecided(to: DateComponents(hour: 18, minute: 0))
+
+        XCTAssertEqual(f.store.item(item.id)?.decideAt, TestDates.date(2026, 10, 4, 9, 0))
+        XCTAssertEqual(f.store.due.map(\.id), [item.id])
+    }
+
     // MARK: Errors
 
     func testSaveFailureKeepsChangeSetsErrorAndStillNotifies() throws {
@@ -356,7 +406,7 @@ final class ItemStoreTests: XCTestCase {
         guard case .saveFailed(let message)? = f.store.lastError else {
             return XCTFail("Expected saveFailed, got \(String(describing: f.store.lastError))")
         }
-        XCTAssertTrue(message.contains("disk full"), message)
+        XCTAssertEqual(message, "Your changes aren't saved yet. disk full. Quitting now would lose them.")
 
         // The next successful save writes everything and clears the save error.
         let second = f.store.add(name: "Lamp", price: nil, note: nil, waitDays: 3)
@@ -393,9 +443,16 @@ final class ItemStoreTests: XCTestCase {
         store.add(name: "Sofa", price: nil, note: nil, waitDays: 14)
         XCTAssertEqual(store.items.count, 1)
         XCTAssertEqual(persistence.saveCount, 0)
-        guard case .saveFailed? = store.lastError else {
-            return XCTFail("Expected saveFailed, got \(String(describing: store.lastError))")
-        }
+        XCTAssertEqual(store.lastError, .saveFailed("Your changes aren't saved yet. WaitList won't overwrite its "
+                                                    + "data file because it couldn't read it. Quitting now would lose them."))
+    }
+
+    func testSaveErrorMessageKeepsTheReasonsOwnPunctuation() throws {
+        let f = try makeFixture()
+        f.persistence.failNextSave = TestError(message: "The volume is full.")
+        f.store.add(name: "Sofa", price: nil, note: nil, waitDays: 14)
+        XCTAssertEqual(f.store.lastError?.message,
+                       "Your changes aren't saved yet. The volume is full. Quitting now would lose them.")
     }
 
     func testInitWithCorruptFileReportsBackupPathAndCanSave() throws {
@@ -439,6 +496,35 @@ final class ItemStoreTests: XCTestCase {
 
         store.add(name: "Sofa", price: nil, note: nil, waitDays: 14)
         XCTAssertEqual(try Data(contentsOf: fileURL), future)
+    }
+
+    func testInitWithAnUnmovableCorruptFileNeverOverwritesIt() throws {
+        let directory = try makeTempDirectory()
+        let folder = directory.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let fileURL = folder.appendingPathComponent("items.json")
+        let garbage = Data("{ broken".utf8)
+        try garbage.write(to: fileURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        }
+        let settings = AppSettings(defaults: try makeTestDefaults())
+        settings.hasMigratedLegacyItems = true
+
+        let store = ItemStore(persistence: FileItemPersistence(fileURL: fileURL), settings: settings, now: start,
+                              legacyItems: { _, _ in [] })
+        guard case .loadFailed(let message)? = store.lastError else {
+            return XCTFail("Expected loadFailed, got \(String(describing: store.lastError))")
+        }
+        XCTAssertTrue(message.contains("left untouched"), message)
+
+        store.add(name: "Sofa", price: nil, note: nil, waitDays: 14)
+        XCTAssertEqual(store.items.count, 1, "kept in memory")
+        guard case .saveFailed? = store.lastError else {
+            return XCTFail("Expected saveFailed, got \(String(describing: store.lastError))")
+        }
+        XCTAssertEqual(try Data(contentsOf: fileURL), garbage)
     }
 
     // MARK: Legacy import
@@ -485,6 +571,33 @@ final class ItemStoreTests: XCTestCase {
         XCTAssertTrue(settings.hasMigratedLegacyItems)
         XCTAssertNil(store.lastError)
         XCTAssertNotNil(persistence.failNextSave, "no save was attempted")
+    }
+
+    func testUnreadableLegacyDataLeavesTheFlagOffSoTheNextLaunchRetries() throws {
+        let persistence = InMemoryItemPersistence()
+        let defaults = try makeTestDefaults()
+        let settings = AppSettings(defaults: defaults)
+
+        let store = ItemStore(persistence: persistence, settings: settings, now: start,
+                              legacyImport: { _, _ in .unreadable })
+
+        XCTAssertEqual(store.items, [])
+        XCTAssertNil(store.lastError)
+        XCTAssertFalse(settings.hasMigratedLegacyItems)
+
+        // Next launch: the data can be read now, and is imported.
+        let legacyItem = Item(name: "From 1.x", createdAt: start, decideAt: TestDates.date(2026, 10, 12, 9, 0))
+        let nextLaunch = ItemStore(persistence: persistence, settings: AppSettings(defaults: defaults), now: start,
+                                   legacyImport: { _, _ in .items([legacyItem]) })
+        XCTAssertEqual(nextLaunch.items, [legacyItem])
+        XCTAssertTrue(AppSettings(defaults: defaults).hasMigratedLegacyItems)
+    }
+
+    func testLegacyImportResultNoneSetsTheFlag() throws {
+        let settings = AppSettings(defaults: try makeTestDefaults())
+        _ = ItemStore(persistence: InMemoryItemPersistence(), settings: settings, now: start,
+                      legacyImport: { _, _ in .none })
+        XCTAssertTrue(settings.hasMigratedLegacyItems)
     }
 
     func testLegacyImportIsRetriedIfSavingFails() throws {

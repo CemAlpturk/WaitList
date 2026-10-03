@@ -23,10 +23,24 @@ final class NotificationsTests: XCTestCase {
         let price = dec("1299")
         let content = NotificationPlan.content(for: makeItem(price: price), now: now, currencyCode: "SEK",
                                                calendar: calendar)
-        let formatted = price.formatted(.currency(code: "SEK"))
+        let formatted = PriceFormat.string(price, currencyCode: "SEK")
 
         XCTAssertFalse(content.title.isEmpty)
         XCTAssertEqual(content.body, "You waited 14 days for “Gorilla Sofa” (\(formatted)). Still want it?")
+    }
+
+    /// The same text as the app shows: no ",00" for whole amounts, decimals otherwise.
+    func testContentPriceMatchesTheAppsPriceFormat() {
+        let whole = NotificationPlan.content(for: makeItem(price: dec("1299.00")), now: now, currencyCode: "SEK",
+                                             calendar: calendar)
+        XCTAssertTrue(whole.body.contains("(\(PriceFormat.string(1299, currencyCode: "SEK")))"), whole.body)
+        XCTAssertFalse(digits(whole.body).contains("129900"), whole.body)
+
+        let fractional = NotificationPlan.content(for: makeItem(price: dec("19.99")), now: now, currencyCode: "SEK",
+                                                  calendar: calendar)
+        XCTAssertTrue(fractional.body.contains("(\(PriceFormat.string(dec("19.99"), currencyCode: "SEK")))"),
+                      fractional.body)
+        XCTAssertTrue(digits(fractional.body).contains("1999"), fractional.body)
     }
 
     func testContentWithoutPrice() {

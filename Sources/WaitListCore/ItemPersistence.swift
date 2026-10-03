@@ -49,9 +49,15 @@ public struct FileItemPersistence: ItemPersistence {
         let fileManager = FileManager.default
         let support = try fileManager.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                           appropriateFor: nil, create: true)
-        let directory = support.appendingPathComponent("WaitList", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent("items.json", isDirectory: false)
+        let fileURL = fileURL(inApplicationSupport: support)
+        try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        return fileURL
+    }
+
+    /// `<support>/WaitList/items.json`. Only builds the path; nothing is created.
+    static func fileURL(inApplicationSupport support: URL) -> URL {
+        support.appendingPathComponent("WaitList", isDirectory: true)
+            .appendingPathComponent("items.json", isDirectory: false)
     }
 
     /// Reads the file. A missing file means no items yet.
@@ -64,9 +70,7 @@ public struct FileItemPersistence: ItemPersistence {
         // A read failure (e.g. permissions) is passed on as is; the file is not moved.
         let data = try Data(contentsOf: fileURL)
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
+        let decoder = Self.makeDecoder()
         let probe: VersionProbe
         do {
             probe = try decoder.decode(VersionProbe.self, from: data)
@@ -92,6 +96,23 @@ public struct FileItemPersistence: ItemPersistence {
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         try data.write(to: fileURL, options: .atomic)
+    }
+
+    /// A decoder for the file format. Dates are ISO 8601 as written by `save` ("2026-10-17T07:00:00Z"); fractional
+    /// seconds ("2026-10-17T07:00:00.250Z") and offsets ("+02:00") are accepted too, so a hand-edited file still loads.
+    static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        let parser = LenientISO8601Parser()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let text = try container.decode(String.self)
+            guard let date = parser.date(from: text) else {
+                throw DecodingError.dataCorruptedError(in: container,
+                                                       debugDescription: "Expected an ISO 8601 date, found \(text)")
+            }
+            return date
+        }
+        return decoder
     }
 
     // MARK: Private
@@ -133,6 +154,26 @@ public struct FileItemPersistence: ItemPersistence {
             }
         }
         return .corruptFileNotMoved(fileURL)
+    }
+}
+
+/// ISO 8601 with whole seconds, then with fractional seconds (`ISO8601DateFormatter` accepts exactly one
+/// of the two per configuration).
+private final class LenientISO8601Parser: @unchecked Sendable {
+    // ISO8601DateFormatter is thread-safe (Formatter subclasses are, since macOS 10.9); these are never mutated.
+    private let wholeSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+    private let fractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    func date(from text: String) -> Date? {
+        wholeSeconds.date(from: text) ?? fractionalSeconds.date(from: text)
     }
 }
 

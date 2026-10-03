@@ -81,6 +81,23 @@ final class DataLocationTests: XCTestCase {
         }
     }
 
+    // MARK: Settings suite
+
+    /// A WAITLIST_DATA_FILE run keeps its settings and @AppStorage values apart from the real ones.
+    func testOverrideUsesTheDebugSettingsSuite() {
+        let url = URL(fileURLWithPath: "/opt/x/items.json")
+        XCTAssertEqual(DataLocation.debugDefaultsSuiteName, "com.cemalpturk.WaitList.debug")
+        XCTAssertEqual(DataLocation.override(url).settingsSuiteName, "com.cemalpturk.WaitList.debug")
+        XCTAssertNil(DataLocation.standard(url).settingsSuiteName)
+        XCTAssertNil(DataLocation.unavailable(reason: "disk full").settingsSuiteName)
+    }
+
+    func testStandardLocationsUseTheStandardDefaults() {
+        let url = URL(fileURLWithPath: "/opt/x/items.json")
+        XCTAssertTrue(DataLocation.standard(url).makeSettingsDefaults() === UserDefaults.standard)
+        XCTAssertTrue(DataLocation.unavailable(reason: "x").makeSettingsDefaults() === UserDefaults.standard)
+    }
+
     // MARK: fileURL
 
     func testFileURLOfEachCase() throws {

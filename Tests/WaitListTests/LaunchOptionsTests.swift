@@ -114,6 +114,21 @@ final class LaunchOptionsTests: XCTestCase {
         }
     }
 
+    func testDebugAddAcceptsUpToTenYearsEitherWay() throws {
+        let tenYears = LaunchOptions.debugAddMaxSeconds
+        XCTAssertEqual(tenYears, 315_576_000)
+        XCTAssertEqual(try parse(["--debug-add-due-in", "315576000", "x"]).debugAdd?.seconds, tenYears)
+        XCTAssertEqual(try parse(["--debug-add-due-in", "-315576000", "x"]).debugAdd?.seconds, -tenYears)
+    }
+
+    /// Larger values used to write dates the data file cannot hold (before year 0 for -1e12), so the next
+    /// launch moved the whole file aside as unreadable. Main exits with 64 (EX_USAGE) on this error.
+    func testDebugAddRejectsMoreThanTenYearsEitherWay() {
+        for seconds in ["315576001", "-315576001", "1e12", "-1e12", "1e300", "-1.7e308"] {
+            assertUsageError(["--debug-add-due-in", seconds, "Name"], contains: "within ±315576000 (10 years)")
+        }
+    }
+
     func testDebugAddWithMissingArgumentsIsAUsageError() {
         let usage = "usage: --debug-add-due-in <seconds> <name>"
         assertUsageError(["--debug-add-due-in"], contains: usage)
@@ -166,6 +181,16 @@ final class LaunchOptionsTests: XCTestCase {
 
     func testAnErrorInAnyFlagFailsTheWholeParse() {
         assertUsageError(["--debug-dump-data", "--debug-add-due-in", "soon", "Test"], contains: "usage")
+    }
+
+    // MARK: Single instance
+
+    func testOnlyRunsThatShowTheAppCheckForAnotherCopy() throws {
+        XCTAssertTrue(try parse([]).launchesApp)
+        XCTAssertTrue(try parse(["--debug-add-due-in", "30", "Test"]).launchesApp, "adds, then launches normally")
+        XCTAssertFalse(try parse(["--snapshot", "/opt/s"]).launchesApp)
+        XCTAssertFalse(try parse(["--debug-dump-data"]).launchesApp)
+        XCTAssertFalse(try parse(["--debug-add-due-in", "30", "Test", "--debug-dump-data"]).launchesApp)
     }
 
     // MARK: UsageError

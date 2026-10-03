@@ -92,6 +92,12 @@ final class FormatTests: XCTestCase {
         XCTAssertFalse(Format.price(Decimal.nan, currencyCode: "SEK").isEmpty)
     }
 
+    func testPriceIsTheSameTextAsInNotifications() {
+        for value in [dec("1299"), dec("1299.00"), dec("19.99"), dec("0.5"), dec("-5")] {
+            XCTAssertEqual(Format.price(value, currencyCode: "SEK"), PriceFormat.string(value, currencyCode: "SEK"))
+        }
+    }
+
     func testUnusualCurrencyCodesStillFormatTheNumber() {
         XCTAssertEqual(digits(Format.price(5, currencyCode: "sek")), "5")   // case-insensitive
         XCTAssertEqual(digits(Format.price(5, currencyCode: "ZZZ")), "5")   // unknown code
@@ -103,55 +109,59 @@ final class FormatTests: XCTestCase {
     private var decimalSeparator: String { Locale.current.decimalSeparator ?? "." }
 
     func testEditablePriceHasNoGrouping() {
-        XCTAssertEqual(digits(Format.editablePrice(1_234_567)), "1234567")
-        let text = Format.editablePrice(1_234_567)
-        XCTAssertTrue(text.allSatisfy { $0.wholeNumberValue != nil }, "only digits, no separators: \(text)")
+        XCTAssertEqual(Format.editablePrice(1_234_567), "1234567")
     }
 
-    func testEditablePriceUsesTheLocalesDecimalSeparatorAndDropsTrailingZeros() {
+    func testEditablePriceUsesASCIIDigitsAndTheLocalesDecimalSeparator() {
         let separator = decimalSeparator
-        XCTAssertEqual(digits(Format.editablePrice(1299)), "1299")
-        XCTAssertEqual(Format.editablePrice(1299).count, 4, "no decimal separator for whole amounts")
-        XCTAssertEqual(Format.editablePrice(dec("1299.00")).count, 4)
-        XCTAssertEqual(digits(Format.editablePrice(dec("1299.5"))), "12995")
-        XCTAssertTrue(Format.editablePrice(dec("1299.5")).contains(separator))
-        XCTAssertEqual(Format.editablePrice(dec("1299.5")).count, 4 + separator.count + 1)
-        XCTAssertEqual(digits(Format.editablePrice(dec("19.99"))), "1999")
-        XCTAssertEqual(Format.editablePrice(dec("19.99")).count, 2 + separator.count + 2)
-        XCTAssertEqual(digits(Format.editablePrice(dec("0.5"))), "05")
-        XCTAssertEqual(digits(Format.editablePrice(0)), "0")
+        XCTAssertEqual(Format.editablePrice(1299), "1299", "no decimal separator for whole amounts")
+        XCTAssertEqual(Format.editablePrice(dec("1299.00")), "1299")
+        XCTAssertEqual(Format.editablePrice(dec("1299.5")), "1299\(separator)5")
+        XCTAssertEqual(Format.editablePrice(dec("19.99")), "19\(separator)99")
+        XCTAssertEqual(Format.editablePrice(dec("0.5")), "0\(separator)5")
+        XCTAssertEqual(Format.editablePrice(0), "0")
     }
 
-    func testEditablePriceRoundsToTwoDecimals() {
-        XCTAssertEqual(digits(Format.editablePrice(dec("1.004"))), "1")
-        XCTAssertEqual(digits(Format.editablePrice(dec("1.006"))), "101")
-        XCTAssertEqual(digits(Format.editablePrice(dec("1.999"))), "2")
+    func testEditablePriceKeepsEveryDecimal() {
+        let separator = decimalSeparator
+        XCTAssertEqual(Format.editablePrice(dec("1.004")), "1\(separator)004")
+        XCTAssertEqual(Format.editablePrice(dec("1.006")), "1\(separator)006")
+        XCTAssertEqual(Format.editablePrice(dec("1.9999")), "1\(separator)9999")
     }
 
     func testEditablePriceOfNegativeAmountKeepsTheSign() {
-        let text = Format.editablePrice(dec("-5.5"))
-        XCTAssertEqual(digits(text), "55")
-        XCTAssertTrue(text.contains("-") || text.contains("\u{2212}"), text)
+        XCTAssertEqual(Format.editablePrice(dec("-5.5")), "-5\(decimalSeparator)5")
     }
 
-    func testEditablePriceParsesBackToTheSameValueInTheCurrentLocale() throws {
+    func testEditablePriceMatchesCoreForTheCurrentLocale() {
+        for text in ["0", "19.99", "1299.5", "1.005"] {
+            XCTAssertEqual(Format.editablePrice(dec(text)), PriceFormat.editable(dec(text), locale: .current))
+        }
+    }
+
+    func testEditablePriceParsesBackToTheSameValueInTheCurrentLocale() {
         // The Add/Edit screen fills the field with editablePrice and reads it back with PriceInput.parse(text).
-        // Locales with non-ASCII digits (ar_EG, fa_IR) do not round-trip; see PriceInputTests. Negative prices
-        // are left out: the screen refuses to save them, so they are never shown for editing.
-        try XCTSkipIf(Decimal(123).formatted(.number.grouping(.never)) != "123", "locale uses non-ASCII digits")
-        for text in ["0", "1", "0.01", "0.5", "19.99", "1299", "1299.5", "12345.67", "1234567.89",
-                     "9999999999.99"] {
+        // Negative prices are left out: the screen refuses to save them, so they are never shown for editing.
+        for text in ["0", "1", "0.01", "0.5", "1.005", "1.0001", "19.99", "1299", "1299.5", "12345.67",
+                     "1234567.89", "999999999999.9999"] {
             let value = dec(text)
             XCTAssertEqual(PriceInput.parse(Format.editablePrice(value)), .value(value), text)
         }
     }
 
-    /// PriceInput accepts any number of decimals but editablePrice shows at most two (Formatting.swift:58),
-    /// so opening an item priced 1.005 and saving it unchanged would store 1.
-    func testKnownIssueEditingAPriceWithMoreThanTwoDecimalsChangesIt() {
-        let shown = Format.editablePrice(dec("1.005"))
-        XCTExpectFailure("editablePrice rounds 1.005 to \(shown)") {
-            XCTAssertEqual(PriceInput.parse(shown), .value(dec("1.005")))
+    /// Locales with their own digits and separators: the edit field shows ASCII digits with the locale's
+    /// decimal separator (U+066B here), and the parser reads that back. Checked through Core because
+    /// `Format.editablePrice` always uses the current locale.
+    func testEditablePriceRoundTripsInArabicAndPersianLocales() {
+        for id in ["ar_EG", "fa_IR"] {
+            let locale = Locale(identifier: id)
+            for text in ["1299", "1299.5", "19.99", "1.005"] {
+                let value = dec(text)
+                let shown = PriceFormat.editable(value, locale: locale)
+                XCTAssertTrue(shown.allSatisfy { $0.isASCII || $0 == "\u{066B}" }, "\(id): \(shown)")
+                XCTAssertEqual(PriceInput.parse(shown, locale: locale), .value(value), "\(id): \(shown)")
+            }
+            XCTAssertEqual(PriceFormat.editable(dec("1299.5"), locale: locale), "1299\u{066B}5")
         }
     }
 
@@ -237,34 +247,35 @@ final class FormatTests: XCTestCase {
         let decideAt = date(2025, 10, 17, 9, 0, in: system)
         let thing = item(created: date(2025, 10, 3, 9, in: system), decideAt: decideAt)
         XCTAssertEqual(Format.timeLeft(thing, now: now, calendar: system),
-                       "Decide today at \(Format.time(decideAt))")
+                       "Ready today at \(Format.time(decideAt))")
     }
 
     func testTimeLeftTomorrow() {
         let decideAt = date(2025, 10, 18, 9, 0, in: system)
         let thing = item(created: date(2025, 10, 3, 9, in: system), decideAt: decideAt)
         XCTAssertEqual(Format.timeLeft(thing, now: date(2025, 10, 17, 8, 15, in: system), calendar: system),
-                       "Decide tomorrow at \(Format.time(decideAt))")
+                       "Ready tomorrow at \(Format.time(decideAt))")
         // Calendar days, not 24-hour periods: one minute to midnight is still "tomorrow" for the next day.
         XCTAssertEqual(Format.timeLeft(thing, now: date(2025, 10, 17, 23, 59, in: system), calendar: system),
-                       "Decide tomorrow at \(Format.time(decideAt))")
+                       "Ready tomorrow at \(Format.time(decideAt))")
     }
 
     func testTimeLeftSeveralDays() {
         let decideAt = date(2025, 10, 29, 9, 0, in: system)
         let thing = item(created: date(2025, 10, 3, 9, in: system), decideAt: decideAt)
         XCTAssertEqual(Format.timeLeft(thing, now: date(2025, 10, 17, 8, 15, in: system), calendar: system),
-                       "12 days left · \(Format.shortDate(decideAt))")
+                       "Ready in 12 days · \(Format.shortDate(decideAt))")
         XCTAssertEqual(Format.timeLeft(thing, now: date(2025, 10, 27, 23, 59, in: system), calendar: system),
-                       "2 days left · \(Format.shortDate(decideAt))")
+                       "Ready in 2 days · \(Format.shortDate(decideAt))")
     }
 
     func testTimeLeftIsNeverSingularDays() {
         let thing = item(created: date(2025, 10, 3, 9, in: system), decideAt: date(2025, 12, 31, 9, in: system))
         for day in 1...28 {
             let text = Format.timeLeft(thing, now: date(2025, 12, day, 8, in: system), calendar: system)
-            XCTAssertFalse(text.hasPrefix("1 day"), text)   // day 30 is "tomorrow", day 31 is "today"
-            XCTAssertFalse(text.hasPrefix("0 day"), text)
+            XCTAssertFalse(text.hasPrefix("Ready in 1 day"), text)   // day 30 is "tomorrow", day 31 is "today"
+            XCTAssertFalse(text.hasPrefix("Ready in 0 day"), text)
+            XCTAssertTrue(text.hasPrefix("Ready in "), text)
         }
     }
 
@@ -273,7 +284,7 @@ final class FormatTests: XCTestCase {
         let decideAt = date(2025, 10, 10, 9, in: system)
         let thing = item(created: date(2025, 9, 26, 9, in: system), decideAt: decideAt)
         XCTAssertEqual(Format.timeLeft(thing, now: date(2025, 10, 17, 8, in: system), calendar: system),
-                       "Decide today at \(Format.time(decideAt))")
+                       "Ready today at \(Format.time(decideAt))")
     }
 
     // MARK: day

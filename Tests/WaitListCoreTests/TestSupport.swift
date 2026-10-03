@@ -44,19 +44,20 @@ struct TestError: Error, LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Only the decimal digits of `text`, as ASCII ("1 299,50 kr" -> "129950", Arabic-Indic digits included).
+func digits(_ text: String) -> String {
+    text.filter { $0.unicodeScalars.first?.properties.numericType == .decimal }
+        .compactMap(\.wholeNumberValue).map(String.init).joined()
+}
+
 extension XCTestCase {
-    /// A UserDefaults suite unique to this test, deleted when the test ends.
+    /// A UserDefaults store unique to this test. Its suite name is a path inside a temp directory, so the
+    /// preferences plist is written there (and deleted with it) instead of into ~/Library/Preferences,
+    /// where cfprefsd can write the file back after the test has deleted it.
     func makeTestDefaults() throws -> UserDefaults {
-        let suiteName = "WaitListCoreTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        addTeardownBlock {
-            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
-            // removePersistentDomain leaves an empty plist in ~/Library/Preferences; delete it too.
-            let plist = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Preferences/\(suiteName).plist")
-            try? FileManager.default.removeItem(at: plist)
-        }
-        return defaults
+        let directory = try makeTempDirectory()
+        let suiteName = directory.appendingPathComponent("defaults").path
+        return try XCTUnwrap(UserDefaults(suiteName: suiteName))
     }
 
     /// A fresh temporary directory, deleted when the test ends.

@@ -48,9 +48,14 @@ public final class ItemStore {
     /// so the user's existing file is never overwritten by an empty or partial list.
     @ObservationIgnored private var saveBlockedReason: String?
 
-    /// Loads from persistence. If loading fails, starts empty and sets lastError. Then, if `settings.hasMigratedLegacyItems` is false, imports `legacyItems` (skipping any ids already present), saves, and sets the flag.
+    /// Loads from persistence. If loading fails, starts empty and sets lastError. Then, if
+    /// `settings.hasMigratedLegacyItems` is false, looks for 1.x items with `legacyImport`, imports them
+    /// (skipping any ids already present), saves, and sets the flag. The flag stays false, so the import is
+    /// tried again on the next launch, if the 1.x data is `.unreadable` or the imported items cannot be saved.
     public init(persistence: any ItemPersistence, settings: AppSettings, now: Date = Date(),
-                legacyItems: (Date, DateComponents) -> [Item] = { LegacyMigration.legacyItems(now: $0, time: $1) }) {
+                legacyImport: (Date, DateComponents) -> LegacyMigration.Result = {
+                    LegacyMigration.find(now: $0, time: $1)
+                }) {
         self.persistence = persistence
         self.settings = settings
         self.now = now
@@ -70,10 +75,20 @@ public final class ItemStore {
             lastError = .loadFailed(
                 "WaitList could not read its saved items: \(reason) "
                 + "The file was not changed. Changes you make now will not be saved until WaitList is restarted.")
-            saveBlockedReason = "Changes are not being saved because WaitList could not read its data file: \(reason)"
+            saveBlockedReason = "WaitList won't overwrite its data file because it couldn't read it."
         }
 
-        importLegacyItemsIfNeeded(legacyItems)
+        importLegacyItemsIfNeeded(legacyImport)
+    }
+
+    /// Like the main initializer, with the 1.x items given as a plain list ([] means nothing to import).
+    /// For tests and sample data.
+    public convenience init(persistence: any ItemPersistence, settings: AppSettings, now: Date = Date(),
+                            legacyItems: (Date, DateComponents) -> [Item]) {
+        self.init(persistence: persistence, settings: settings, now: now, legacyImport: { now, time in
+            let items = legacyItems(now, time)
+            return items.isEmpty ? .none : .items(items)
+        })
     }
 
     // MARK: Derived lists and totals
@@ -188,14 +203,21 @@ public final class ItemStore {
         commit(items.filter { !$0.isDecided })
     }
 
-    /// Keeps each undecided item's day but changes its time of day.
-    /// Call this when the notification time setting changes.
+    /// Keeps each waiting item's day but changes its time of day. Call this when the notification time
+    /// setting changes, and when the time zone changes (so 09:00 stays 09:00 local).
+    ///
+    /// Uses the stored `now` (call `refresh()` first if time may have moved on). Only items still waiting at
+    /// `now` move: items already due stay due, and an item whose new time today has already passed keeps its
+    /// old time rather than becoming due at once without a notification. Decided items are never touched.
     public func retimeUndecided(to time: DateComponents) {
         let calendar = calendar
+        let now = now
         commit(items.map { item in
-            guard !item.isDecided else { return item }
+            guard item.isWaiting(at: now) else { return item }
+            let retimed = Scheduling.retimed(item.decideAt, to: time, calendar: calendar)
+            guard retimed > now else { return item }
             var copy = item
-            copy.decideAt = Scheduling.retimed(item.decideAt, to: time, calendar: calendar)
+            copy.decideAt = retimed
             return copy
         })
     }
@@ -213,14 +235,21 @@ public final class ItemStore {
 
     // MARK: Private
 
-    private func importLegacyItemsIfNeeded(_ legacyItems: (Date, DateComponents) -> [Item]) {
+    private func importLegacyItemsIfNeeded(_ legacyImport: (Date, DateComponents) -> LegacyMigration.Result) {
         guard !settings.hasMigratedLegacyItems else { return }
         // Try again on a later launch rather than mixing old items into a list that cannot be saved.
         guard saveBlockedReason == nil else { return }
 
+        let found: [Item]
+        switch legacyImport(now, settings.notificationTime) {
+        case .none: found = []
+        case .items(let items): found = items
+        case .unreadable: return  // leave the flag off: the next launch tries again
+        }
+
         var knownIDs = Set(items.map(\.id))
         var imported: [Item] = []
-        for item in legacyItems(now, settings.notificationTime) where !knownIDs.contains(item.id) {
+        for item in found where !knownIDs.contains(item.id) {
             knownIDs.insert(item.id)
             imported.append(item)
         }
@@ -256,7 +285,7 @@ public final class ItemStore {
     @discardableResult
     private func persist() -> Bool {
         if let saveBlockedReason {
-            lastError = .saveFailed(saveBlockedReason)
+            lastError = .saveFailed(Self.unsavedMessage(reason: saveBlockedReason))
             return false
         }
         do {
@@ -267,13 +296,25 @@ public final class ItemStore {
             }
             return true
         } catch {
-            lastError = .saveFailed("WaitList could not save your changes: \(Self.describe(error))")
+            lastError = .saveFailed(Self.unsavedMessage(reason: Self.describe(error)))
             return false
         }
     }
 
+    /// "Your changes aren't saved yet. <reason> Quitting now would lose them."
+    private static func unsavedMessage(reason: String) -> String {
+        "Your changes aren't saved yet. \(sentence(reason)) Quitting now would lose them."
+    }
+
     private static func describe(_ error: Error) -> String {
         error.localizedDescription
+    }
+
+    /// `text` trimmed, with a final period added unless it already ends a sentence.
+    private static func sentence(_ text: String) -> String {
+        let trimmed = trimmed(text)
+        guard let last = trimmed.last else { return trimmed }
+        return ".!?…".contains(last) ? trimmed : trimmed + "."
     }
 
     private static func trimmed(_ text: String) -> String {

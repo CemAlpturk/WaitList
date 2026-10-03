@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var services: AppServices?
     private var statusItem: StatusItemController?
     private var refreshTimer: Timer?
+    /// Fires just after the next waiting item becomes due, so the badge and list update on time.
+    private var dueTimer: Timer?
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
 
     init(dataLocation: DataLocation) {
@@ -28,11 +30,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let settings = AppSettings()
+        // A WAITLIST_DATA_FILE run keeps its settings (and @AppStorage) in a separate suite.
+        let defaults = dataLocation.makeSettingsDefaults()
+        let settings = AppSettings(defaults: defaults)
         let (store, notice) = Self.makeStore(location: dataLocation, settings: settings)
         let services = AppServices.live(dataFileURL: dataLocation.fileURL, notice: notice,
                                         notifications: notifications)
-        let statusItem = StatusItemController(store: store, settings: settings, services: services, router: router)
+        let statusItem = StatusItemController(store: store, settings: settings, services: services, router: router,
+                                              defaults: defaults)
         self.settings = settings
         self.store = store
         self.services = services
@@ -58,21 +63,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    /// Opens the popover on the list (used by notification taps).
-    func openPopover(screen: Screen = .list) {
-        statusItem?.showPopover(screen: screen)
+    /// Opens the popover for a notification tap or a reopen: on the list, unless an Add/Edit form is open.
+    func openPopover() {
+        statusItem?.showPopover(screen: Self.screenToShowOnOpen(from: router.screen))
+    }
+
+    /// The screen to switch to when the app is brought up from outside (notification tap, reopen): the list,
+    /// or nil to stay where the user is when an Add/Edit form is open, so a half-typed item is not thrown away.
+    nonisolated static func screenToShowOnOpen(from current: Screen) -> Screen? {
+        if case .add = current { return nil }
+        return .list
     }
 
     // MARK: Private
 
     private func storeDidChange() {
         guard let store else { return }
-        notifications.reschedule(store: store)
+        notifications.reschedule()
         statusItem?.setBadge(store.due.count)
+        armDueTimer(for: store)
     }
 
     private func refreshNow() {
         store?.refresh()
+    }
+
+    /// One-shot timer for the earliest waiting item (+1 s), re-armed after every change.
+    private func armDueTimer(for store: ItemStore) {
+        dueTimer?.invalidate()
+        dueTimer = nil
+        guard let next = store.waiting.first?.decideAt else { return }
+        let timer = Timer(fire: next.addingTimeInterval(1), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshNow() }
+        }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        dueTimer = timer
+    }
+
+    /// The system time zone changed: decisions keep their local time of day (09:00 stays 09:00 here).
+    private func timeZoneDidChange() {
+        NSTimeZone.resetSystemTimeZone()
+        guard let store, let settings else { return }
+        store.refresh()
+        store.retimeUndecided(to: settings.notificationTime)
     }
 
     /// Builds the store for the chosen data location. Returns an app-level notice to show, if any.
@@ -81,14 +115,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .standard(let url):
             return (ItemStore(persistence: FileItemPersistence(fileURL: url), settings: settings), nil)
         case .override(let url):
-            let store = withoutLegacyImport(settings) {
-                ItemStore(persistence: FileItemPersistence(fileURL: url), settings: settings,
-                          legacyItems: { _, _ in [] })
-            }
+            // Settings come from the debug suite here, so the real "already migrated" flag is never touched.
+            let store = ItemStore(persistence: FileItemPersistence(fileURL: url), settings: settings,
+                                  legacyImport: { _, _ in .none })
             return (store, nil)
         case .unavailable(let reason):
             let store = withoutLegacyImport(settings) {
-                ItemStore(persistence: InMemoryItemPersistence(), settings: settings, legacyItems: { _, _ in [] })
+                ItemStore(persistence: InMemoryItemPersistence(), settings: settings, legacyImport: { _, _ in .none })
             }
             let notice = "WaitList can't open its data folder (\(reason)). "
                 + "You can keep using it, but nothing you add will be kept after you quit."
@@ -97,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Runs `body` with legacy import disabled and restores the "already migrated" flag afterwards,
-    /// so a test file or an in-memory session never marks 1.x items as imported into the real data.
+    /// so an in-memory session never marks 1.x items as imported into the real data.
     private static func withoutLegacyImport(_ settings: AppSettings, _ body: () -> ItemStore) -> ItemStore {
         let wasMigrated = settings.hasMigratedLegacyItems
         let store = body()
@@ -109,18 +142,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installObservers() {
         let workspace = NSWorkspace.shared.notificationCenter
         let local = NotificationCenter.default
-        let names: [(NotificationCenter, Notification.Name)] = [
+        let refreshing: [(NotificationCenter, Notification.Name)] = [
             (workspace, NSWorkspace.didWakeNotification),
             (local, .NSCalendarDayChanged),
             (local, .NSSystemClockDidChange),
-            (local, .NSSystemTimeZoneDidChange),
         ]
-        for (center, name) in names {
-            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshNow() }
-            }
-            observers.append((center, token))
+        for (center, name) in refreshing {
+            observe(name, on: center) { $0.refreshNow() }
         }
+        observe(.NSSystemTimeZoneDidChange, on: local) { $0.timeZoneDidChange() }
+    }
+
+    private func observe(_ name: Notification.Name, on center: NotificationCenter,
+                         _ action: @escaping @MainActor (AppDelegate) -> Void) {
+        let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                action(self)
+            }
+        }
+        observers.append((center, token))
     }
 
     private func startRefreshTimer() {

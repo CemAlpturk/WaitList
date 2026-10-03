@@ -5,7 +5,7 @@
 //
 // Usage, from the repo root:
 //   make icon                                   export concept A (same as the next line)
-//   swift Tools/make-icon.swift                 export concept A into Resources/
+//   swift Tools/make-icon.swift                 export concept A into Resources/ and Screenshots/
 //   swift Tools/make-icon.swift --concept b     export concept B instead
 //   swift Tools/make-icon.swift --previews      render comparison images into build/icon-previews/
 //
@@ -15,9 +15,10 @@
 //
 // Outputs of the default export:
 //   Resources/AppIcon.icns          app icon, 16 to 1024 px (built from build/AppIcon.iconset by iconutil)
-//   Resources/AppIcon-1024.png      full-size icon for the README
 //   Resources/MenuBarIcon.png       18 x 18 menu bar template image (pure black + alpha)
 //   Resources/MenuBarIcon@2x.png    36 x 36 retina version
+//   Screenshots/icon.png            full-size 1024 px icon for the README (not shipped in the app bundle,
+//                                   which copies everything in Resources/)
 
 import CoreGraphics
 import Foundation
@@ -701,7 +702,8 @@ func export(_ concept: any IconConcept, root: URL) throws {
     try run("/usr/bin/iconutil", ["-c", "icns", iconset.path, "-o", icns.path])
     print("  wrote \(relative(icns))")
 
-    try writePNG(Renderer.icon(concept, pixels: 1024), to: resources.appendingPathComponent("AppIcon-1024.png"))
+    let screenshots = root.appendingPathComponent("Screenshots")
+    try writePNG(Renderer.icon(concept, pixels: 1024), to: screenshots.appendingPathComponent("icon.png"))
     try writePNG(Renderer.menuBarGlyph(concept, scale: 1), to: resources.appendingPathComponent("MenuBarIcon.png"))
     try writePNG(Renderer.menuBarGlyph(concept, scale: 2), to: resources.appendingPathComponent("MenuBarIcon@2x.png"), scale: 2)
 }
@@ -750,7 +752,7 @@ func relative(_ url: URL) -> String {
 
 let usage = """
 usage: swift Tools/make-icon.swift [--concept a|b|c] [--previews]
-  (default)       export the selected concept (a) into Resources/
+  (default)       export the selected concept (a) into Resources/ and Screenshots/icon.png
   --concept X     a = hourglass + bag, b = paused bag, c = tag + clock
   --previews      render build/icon-previews/{concept-a,concept-b,concept-c,sheet,pixels}.png
 """

@@ -1,14 +1,17 @@
 import AppKit
+import os
 import UserNotifications
 import WaitListCore
 
 /// Schedules one "still want it?" notification per waiting item and handles the buttons on it.
+/// What to add and remove is decided by `NotificationPlanner` (WaitListCore); this class only talks to
+/// the notification center.
 ///
 /// Must be set as the notification center delegate before `applicationDidFinishLaunching` returns,
 /// otherwise a tap that launches the app is lost. Responses that arrive before `attach` are queued.
 @MainActor
 final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
-    /// What was scheduled for an item; if it is unchanged we do not re-add the request.
+    /// What was scheduled for an item; if it is unchanged (and still pending) the request is not re-added.
     private struct Signature: Equatable {
         let fireDate: Date
         let timeZone: String
@@ -16,21 +19,25 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
         let body: String
     }
 
-    /// The parts of a response we need, extracted off the main actor.
+    /// The parts of a response we need, extracted before hopping to the main actor.
     private struct Response: Sendable {
         let actionIdentifier: String
         let itemID: UUID?
     }
+
+    private static let log = Logger(subsystem: AppInfo.bundleIdentifier, category: "Notifications")
 
     private weak var store: ItemStore?
     private weak var settings: AppSettings?
     private var openPopover: (() -> Void)?
     private var queuedResponses: [Response] = []
 
-    /// Requests we believe are pending, by identifier.
+    /// Requests we added, by identifier.
     private var scheduled: [String: Signature] = [:]
-    /// Identifiers kept by the last cleanup pass, so a periodic refresh that changes nothing is cheap.
-    private var lastCleanup: (pending: Set<String>, delivered: Set<String>)?
+    /// True while a sync pass runs; passes never overlap, so removals and additions happen in order.
+    private var isSyncing = false
+    /// Set when the store changed during a pass: one more pass runs right after it.
+    private var needsSync = false
 
     private var center: UNUserNotificationCenter { .current() }
 
@@ -62,79 +69,93 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     /// Asks for permission (the system only prompts once). Once granted, schedules everything again,
     /// because requests added before the answer may have been rejected.
     func requestAuthorization() {
-        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
-            if let error {
-                NSLog("WaitList: notification authorization failed: \(error.localizedDescription)")
+        Task { @MainActor in
+            do {
+                guard try await center.requestAuthorization(options: [.alert, .sound]) else { return }
+                scheduled = [:]
+                reschedule()
+            } catch {
+                Self.log.error("Notification authorization failed: \(error.localizedDescription, privacy: .public)")
             }
-            guard granted, let self else { return }
-            Task { @MainActor in self.rescheduleFromScratch() }
         }
     }
 
     // MARK: Scheduling
 
-    /// Makes pending requests match `store.waiting` and removes delivered notifications for items
-    /// that are no longer due or waiting (decided or deleted).
-    func reschedule(store: ItemStore) {
+    /// Brings the notification center in line with the store: a pending request for every waiting item,
+    /// no requests for decided or deleted items, and delivered notifications only for items that are due.
+    /// Returns at once; the work happens in a background pass, and calls during a pass are merged into one more.
+    func reschedule() {
+        needsSync = true
+        guard !isSyncing else { return }
+        isSyncing = true
+        Task { @MainActor in
+            while needsSync {
+                needsSync = false
+                await syncPass()
+            }
+            isSyncing = false
+        }
+    }
+
+    private func syncPass() async {
+        let pending = await center.pendingNotificationRequests().map(\.identifier)
+        let delivered = await center.deliveredNotifications().map(\.request.identifier)
+
+        // Back on the main actor: read the store now, after the awaits, so the plan matches what it holds.
+        guard let store else { return }
+        let plan = NotificationPlanner.plan(items: store.items, now: Date(), pendingIdentifiers: pending,
+                                            deliveredIdentifiers: delivered)
+        if !plan.removePending.isEmpty {
+            center.removePendingNotificationRequests(withIdentifiers: plan.removePending)
+        }
+        if !plan.removeDelivered.isEmpty {
+            center.removeDeliveredNotifications(withIdentifiers: plan.removeDelivered)
+        }
+
         let currencyCode = settings?.currencyCode ?? AppSettings.defaultCurrencyCode
         let calendar = store.calendar
-        let timeZone = calendar.timeZone.identifier
+        let pendingSet = Set(pending)
         var desired: [String: Signature] = [:]
-
-        for item in store.waiting {
+        var requests: [UNNotificationRequest] = []
+        for item in plan.schedule {
             let identifier = NotificationPlan.requestIdentifier(for: item)
             let text = NotificationPlan.content(for: item, now: item.decideAt, currencyCode: currencyCode,
                                                 calendar: calendar)
             // Whole seconds, rounded up, so the notification never fires before the item is due.
             let fireDate = Date(timeIntervalSinceReferenceDate: item.decideAt.timeIntervalSinceReferenceDate.rounded(.up))
-            let signature = Signature(fireDate: fireDate, timeZone: timeZone, title: text.title, body: text.body)
+            let signature = Signature(fireDate: fireDate, timeZone: calendar.timeZone.identifier,
+                                      title: text.title, body: text.body)
             desired[identifier] = signature
-            guard scheduled[identifier] != signature else { continue }
-
-            let content = UNMutableNotificationContent()
-            content.title = text.title
-            content.body = text.body
-            content.sound = .default
-            content.categoryIdentifier = NotificationPlan.categoryIdentifier
-            content.userInfo = ["itemID": item.id.uuidString]
-            let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second],
-                                                     from: fireDate)
-            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-            center.add(request) { [weak self] error in
-                guard let error, let self else { return }
-                NSLog("WaitList: could not schedule notification: \(error.localizedDescription)")
-                // Forget it so the next refresh tries again.
-                Task { @MainActor in self.scheduled[identifier] = nil }
-            }
+            if scheduled[identifier] == signature, pendingSet.contains(identifier) { continue }
+            requests.append(Self.request(identifier: identifier, itemID: item.id, title: text.title, body: text.body,
+                                         fireDate: fireDate, calendar: calendar))
         }
         scheduled = desired
 
-        let keepPending = Set(desired.keys)
-        let keepDelivered = keepPending.union(store.due.map(NotificationPlan.requestIdentifier(for:)))
-        if let lastCleanup, lastCleanup.pending == keepPending, lastCleanup.delivered == keepDelivered {
-            return
-        }
-        lastCleanup = (keepPending, keepDelivered)
-
-        center.getPendingNotificationRequests { requests in
-            let stale = requests.map(\.identifier).filter { !keepPending.contains($0) }
-            if !stale.isEmpty {
-                UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: stale)
-            }
-        }
-        center.getDeliveredNotifications { notifications in
-            let stale = notifications.map(\.request.identifier).filter { !keepDelivered.contains($0) }
-            if !stale.isEmpty {
-                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: stale)
+        // Adding a request with an existing identifier replaces it.
+        for request in requests {
+            do {
+                try await center.add(request)
+            } catch {
+                Self.log.error("Could not schedule a notification: \(error.localizedDescription, privacy: .public)")
+                // Forget it so the next pass tries again.
+                scheduled[request.identifier] = nil
             }
         }
     }
 
-    private func rescheduleFromScratch() {
-        scheduled = [:]
-        lastCleanup = nil
-        if let store { reschedule(store: store) }
+    private static func request(identifier: String, itemID: UUID, title: String, body: String, fireDate: Date,
+                                calendar: Calendar) -> UNNotificationRequest {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.categoryIdentifier = NotificationPlan.categoryIdentifier
+        content.userInfo = ["itemID": itemID.uuidString]
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fireDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        return UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
     }
 
     // MARK: Settings support
@@ -191,19 +212,16 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         store.refresh()
-
-        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+        let item = response.itemID.flatMap(store.item)
+        switch NotificationPlanner.response(to: response.actionIdentifier, item: item, now: store.now) {
+        case .openPopover?:
             openPopover?()
-            return
-        }
-        // Ignore stale buttons, e.g. on a notification for an item already decided in the popover.
-        guard let action = NotificationPlan.Action(rawValue: response.actionIdentifier),
-              let id = response.itemID,
-              let item = store.item(id), !item.isDecided else { return }
-        switch action {
-        case .bought: store.decide(id, .bought)
-        case .skipped: store.decide(id, .skipped)
-        case .extend: store.extend(id, byDays: NotificationPlan.extendDays)
+        case .decide(let id, let outcome)?:
+            store.decide(id, outcome)
+        case .extend(let id, let days)?:
+            store.extend(id, byDays: days)
+        case nil:
+            break  // dismissed, or a stale button for an item decided or given more time since
         }
     }
 }

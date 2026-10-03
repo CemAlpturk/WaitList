@@ -13,7 +13,9 @@ final class StatusItemController: NSObject {
     private let router: Router
     private lazy var menu: NSMenu = makeMenu()
 
-    init(store: ItemStore, settings: AppSettings, services: AppServices, router: Router) {
+    /// `defaults` backs the views' `@AppStorage` (it is the settings' suite, so a WAITLIST_DATA_FILE run
+    /// never writes the real preferences).
+    init(store: ItemStore, settings: AppSettings, services: AppServices, router: Router, defaults: UserDefaults) {
         self.store = store
         self.router = router
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -31,6 +33,7 @@ final class StatusItemController: NSObject {
 
         let root = RootView()
             .waitListEnvironment(store: store, settings: settings, services: services, router: router)
+            .defaultAppStorage(defaults)
         let host = NSHostingController(rootView: root)
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host

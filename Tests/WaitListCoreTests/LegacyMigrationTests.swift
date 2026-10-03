@@ -94,6 +94,91 @@ final class LegacyMigrationTests: XCTestCase {
                                                    containerPlistURL: nil, calendar: calendar), [])
     }
 
+    // MARK: find
+
+    func testFindReturnsItemsFromDefaultsOrPlist() throws {
+        let defaults = try makeTestDefaults()
+        defaults.set(Data(legacyJSON.utf8), forKey: "products")
+        guard case .items(let fromDefaults) = LegacyMigration.find(now: now, time: nineAM, defaults: defaults,
+                                                                    containerPlistURL: nil, calendar: calendar) else {
+            return XCTFail("expected items")
+        }
+        XCTAssertEqual(fromDefaults.map(\.name), ["Gorilla Sofa", "Lamp"])
+
+        let directory = try makeTempDirectory()
+        let plistURL = directory.appendingPathComponent("legacy.plist")
+        try PropertyListSerialization.data(fromPropertyList: ["products": Data(legacyJSON.utf8)], format: .binary,
+                                           options: 0).write(to: plistURL)
+        guard case .items(let fromPlist) = LegacyMigration.find(now: now, time: nineAM,
+                                                                 defaults: try makeTestDefaults(),
+                                                                 containerPlistURL: plistURL, calendar: calendar) else {
+            return XCTFail("expected items")
+        }
+        XCTAssertEqual(fromPlist.count, 2)
+    }
+
+    func testFindReturnsNoneWhenNothingExistsOrTheDataIsDamaged() throws {
+        let defaults = try makeTestDefaults()
+        let directory = try makeTempDirectory()
+        XCTAssertEqual(LegacyMigration.find(now: now, time: nineAM, defaults: defaults,
+                                            containerPlistURL: directory.appendingPathComponent("missing.plist"),
+                                            calendar: calendar), .none)
+        XCTAssertEqual(LegacyMigration.find(now: now, time: nineAM, defaults: defaults,
+                                            containerPlistURL: directory.appendingPathComponent("no/such/dir.plist"),
+                                            calendar: calendar), .none)
+        XCTAssertEqual(LegacyMigration.find(now: now, time: nineAM, defaults: defaults, containerPlistURL: nil,
+                                            calendar: calendar), .none)
+
+        let broken = directory.appendingPathComponent("broken.plist")
+        try Data("not a plist".utf8).write(to: broken)
+        XCTAssertEqual(LegacyMigration.find(now: now, time: nineAM, defaults: defaults, containerPlistURL: broken,
+                                            calendar: calendar), .none, "damaged data will never import")
+
+        let noProducts = directory.appendingPathComponent("other.plist")
+        try PropertyListSerialization.data(fromPropertyList: ["SomethingElse": 1], format: .xml, options: 0)
+            .write(to: noProducts)
+        XCTAssertEqual(LegacyMigration.find(now: now, time: nineAM, defaults: defaults, containerPlistURL: noProducts,
+                                            calendar: calendar), .none)
+    }
+
+    /// The 1.x container plist exists but cannot be read, as when the user denies macOS's
+    /// "access data from other apps" prompt. Simulated with a file nobody may read.
+    func testFindReportsAnUnreadablePlistSoTheImportIsRetried() throws {
+        let directory = try makeTempDirectory()
+        let plistURL = directory.appendingPathComponent("com.cemalpturk.WaitList.plist")
+        try PropertyListSerialization.data(fromPropertyList: ["products": Data(legacyJSON.utf8)], format: .binary,
+                                           options: 0).write(to: plistURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: plistURL.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: plistURL.path)
+        }
+        try XCTSkipIf((try? Data(contentsOf: plistURL)) != nil, "running with permission to read any file")
+
+        let defaults = try makeTestDefaults()
+        XCTAssertEqual(LegacyMigration.find(now: now, time: nineAM, defaults: defaults, containerPlistURL: plistURL,
+                                            calendar: calendar), .unreadable)
+        XCTAssertEqual(LegacyMigration.legacyItems(now: now, time: nineAM, defaults: defaults,
+                                                   containerPlistURL: plistURL, calendar: calendar), [])
+    }
+
+    func testItemsInDefaultsWinOverAnUnreadablePlist() throws {
+        let defaults = try makeTestDefaults()
+        defaults.set(Data(legacyJSON.utf8), forKey: "products")
+        let directory = try makeTempDirectory()
+        let plistURL = directory.appendingPathComponent("locked.plist")
+        try Data().write(to: plistURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: plistURL.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: plistURL.path)
+        }
+
+        guard case .items(let items) = LegacyMigration.find(now: now, time: nineAM, defaults: defaults,
+                                                            containerPlistURL: plistURL, calendar: calendar) else {
+            return XCTFail("expected items")
+        }
+        XCTAssertEqual(items.count, 2)
+    }
+
     func testDefaultContainerPlistURL() {
         let path = LegacyMigration.defaultContainerPlistURL.path
         XCTAssertTrue(path.hasSuffix(
