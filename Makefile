@@ -1,5 +1,5 @@
 # WaitList — build without Xcode. Requires Command Line Tools (Swift 5.10+).
-.PHONY: build app run stop test icon release clean
+.PHONY: build app run stop install test icon release clean
 
 CONFIG ?= release
 APP = build/WaitList.app
@@ -15,6 +15,11 @@ run: stop app     ## Build and launch the app
 
 stop:             ## Quit a running WaitList
 	-pkill -x WaitList 2>/dev/null; true
+
+install: stop app ## Build a release bundle, copy it to /Applications and launch it
+	rm -rf /Applications/WaitList.app
+	ditto $(APP) /Applications/WaitList.app
+	open /Applications/WaitList.app
 
 test:             ## Run unit tests
 	swift test
