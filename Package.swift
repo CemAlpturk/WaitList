@@ -14,5 +14,7 @@ let package = Package(
         // The menubar app: AppKit lifecycle, notifications, SwiftUI views.
         .executableTarget(name: "WaitList", dependencies: ["WaitListCore"]),
         .testTarget(name: "WaitListCoreTests", dependencies: ["WaitListCore"]),
+        // App layer: formatting, price parsing, launch options, data location, router, services.
+        .testTarget(name: "WaitListTests", dependencies: ["WaitList", "WaitListCore"]),
     ]
 )
