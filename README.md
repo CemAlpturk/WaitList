@@ -27,7 +27,7 @@ Version 2.0 is a rewrite from scratch. Items saved by WaitList 1.x are imported 
 
 - **Lives in the menubar**: No Dock icon and no windows. Left click the icon to open a popover. Right click it for a menu with Open, Add Item, Settings and Quit.
 - **Add items with some context**: A name, an optional price, an optional note or link, and a waiting period.
-- **Flexible waiting periods**: Pick 7, 14, 30 or 90 days, or enter any number from 1 to 365. You choose the default.
+- **Flexible waiting periods**: Pick 7, 14, 30 or 90 days, or enter any number from 1 to 365. You choose the default from the four presets.
 - **Progress at a glance**: Every waiting item shows a thin progress bar and how many days are left.
 - **A reminder at the right time**: When the period ends, the item moves to a "Ready to decide" section and a macOS notification appears. The default time is 09:00, and you can change it.
 - **Decide your way**: **Skip it**, **Bought it** or **Wait 7 more days**, from the notification or from the popover. You can also decide early, edit an item, or delete it.
@@ -54,7 +54,7 @@ WaitList needs **macOS 14 Sonoma or later**.
 
 5. **Allow Notifications**: WaitList asks for permission to send notifications when it starts. Say yes, or the reminders will not appear. You can change this later in System Settings. The Settings screen in WaitList shows the current status and has a shortcut.
 
-6. **(Optional) Launch at Login**: Open WaitList's settings and turn on **Launch at login**. If macOS asks for approval, use the **Open Login Items** button that appears there.
+6. **(Optional) Open at Login**: Open WaitList's settings and turn on **Open at Login**. If macOS asks for approval, use the **Open Login Items** button that appears there.
 
 ## Usage
 
@@ -63,22 +63,23 @@ WaitList needs **macOS 14 Sonoma or later**.
    - Right click shows a menu: **Open WaitList**, **Add Item…**, **Settings…** and **Quit WaitList**.
 
 2. **Add an Item**:
-   - Click the **+** button (or **Add item**) in the popover. In the popover, ⌘N does the same.
+   - Click **Add Item** at the bottom of the popover, or press ⌘N on the list. When the list is empty, the button is in the middle of the screen instead.
    - Enter a name. The price and the note are optional. A note can be plain text or a link, and a link gets a small link icon that opens it.
+   - In Add and Edit, the price can use "." or "," as the decimal separator ("19.99" or "19,99"). Thousands separators and currency symbols or codes are ignored ("1 299", "$20", "SEK 20"), but an amount with more than 12 digits before the decimal point or more than 4 decimals is rejected.
    - Pick a waiting period: 7, 14, 30 or 90 days, or **Custom** for 1 to 365 days. The screen shows the exact date and time you will decide.
    - Click **Add to WaitList**.
 
-3. **Wait**: Waiting items show a thin progress bar and a line like "12 days left" with the date. In the last two days it reads "Decide tomorrow at 09:00" or "Decide today at 09:00".
+3. **Wait**: Waiting items show a thin progress bar and a line like "Ready in 12 days · Thu 15 Oct". In the last two days it reads "Ready tomorrow at 09:00" or "Ready today at 09:00".
 
 4. **Decide**: When the period ends, at your reminder time, the item moves to **Ready to decide** and a notification appears with three actions:
    - **Skip it**: You do not need it. It goes to your history as money not spent.
    - **Bought it**: You still wanted it and bought it.
    - **Wait 7 more days**: Not sure yet. The decision moves back by 7 days (counted from today if the item is already due).
 
-   Clicking the notification itself opens the popover. The same actions are on each item in the popover.
+   Clicking the notification itself opens the popover. The same actions are on each item in **Ready to decide**: **Skip it** and **Bought it** are buttons, and a small **Not sure? Wait 7 more days** button sits right below them.
 
 5. **Change Your Mind Early**: Use the **⋯** button on an item, or right-click it.
-   - **Decide now** to skip or buy before the period ends.
+   - **Decide Now** to skip or buy before the period ends.
    - **Wait 7 more days** to extend it.
    - **Edit…** to change the name, price or note.
    - **Delete…** to remove it. WaitList asks you to confirm first.
@@ -86,17 +87,22 @@ WaitList needs **macOS 14 Sonoma or later**.
 6. **Review Your History**:
    - Decided items go to the **History** section, which you can expand and collapse.
    - Its header shows "Saved X · Spent Y". Saved is the total price of skipped items. Spent is the total price of items you bought. Items without a price count as zero. If no item has a price, you see counts instead.
-   - After you decide, an **Undo** button stays on screen for a few seconds. Later, right-click an item in History and choose **Undo decision**.
-   - **Clear history…** removes all decided items and starts the totals over. WaitList asks you to confirm.
+   - The footer of the list also shows the saved total, once you have skipped an item with a price.
+   - After you decide in the popover, an undo toast appears at the bottom for a few seconds. Click **Undo** or press ⌘Z.
+   - Each History row has a **⋯** menu (or right-click it) with **Undo Decision** and **Delete…**. Deleting asks you to confirm, and it also removes the item from your totals.
+   - **Clear History…** removes all decided items and starts the totals over. WaitList asks you to confirm.
 
-7. **Adjust Settings**: Click the gear icon in the popover (or press ⌘,).
-   - **Default wait**: The waiting period suggested for new items. The default is 14 days.
-   - **Reminder time**: When items become ready to decide. The default is 09:00. Changing it also moves your upcoming decisions to the new time.
-   - **Notifications**: Shows whether macOS allows them, with a shortcut to System Settings.
-   - **Currency**: The currency for prices. It starts as your region's currency (or USD if your region has none). Prices are shown in it, with no conversion.
-   - **Launch at login**.
-   - **Data**: Shows where your data file is and opens it in Finder.
-   - **Quit WaitList**.
+7. **Adjust Settings**: Click the gear icon in the popover (or press ⌘,), or choose **Settings…** from the right-click menu. The screen has three groups.
+   - **General**:
+     - **Default wait**: The waiting period suggested for new items. Pick 7, 14, 30 or 90 days. The default is 14 days.
+     - **Currency**: The currency for prices. It starts as your region's currency (or USD if your region has none). Prices are shown in it, with no conversion.
+     - **Open at Login**: Starts WaitList when you log in.
+   - **Reminder**:
+     - **Reminder time**: When items become ready to decide. The default is 09:00. Changing it moves only the items that are still waiting. Items already ready to decide stay as they are, and so does a waiting item whose new time today has already passed.
+     - **Notifications**: Shows whether macOS allows them, with a shortcut to System Settings if they are off.
+   - **About**:
+     - The version, and **Quit WaitList**.
+     - **Data file**: **Show in Finder** reveals your data file. Hover over the row to see its path.
 
 ## Screenshots
 
@@ -135,7 +141,7 @@ WaitList keeps your items in one file:
 
 ## Building from Source
 
-You do not need Xcode. You only need the Command Line Tools with Swift 5.10 or later:
+You do not need Xcode for a normal build. You only need the Command Line Tools with Swift 5.10 or later:
 
 ```bash
 xcode-select --install
@@ -152,11 +158,13 @@ make run
 | `make app` | Builds `build/WaitList.app` (a release build, ad-hoc signed). Use `make app CONFIG=debug` for a debug build. |
 | `make run` | Quits a running WaitList, builds the app, and launches it. |
 | `make test` | Runs the unit tests. |
-| `make icon` | Regenerates the app icon and menubar glyphs from `Tools/make-icon.swift`. |
+| `make icon` | Regenerates the app icon from `Tools/make-icon.swift`. The `.icns` and the menubar glyphs go to `Resources/`, and the 1024 px PNG goes to `Screenshots/icon.png`. |
 | `make release` | Builds the app and zips it to `build/WaitList.zip`. |
 | `make build` | Compiles with SwiftPM only, with no app bundle. |
 | `make stop` | Quits a running WaitList. |
 | `make clean` | Removes `.build` and `build`. |
+
+The plain `make app` builds for the architecture of your Mac only, and works with just the Command Line Tools. `UNIVERSAL=1 make app` builds one binary for Apple silicon and Intel, and needs Xcode.
 
 The package also opens in Xcode if you prefer: open `Package.swift`.
 
@@ -169,15 +177,16 @@ The code is split into two targets:
 
 The app version lives in `Packaging/Info.plist` and `Sources/WaitListCore/Version.swift`. `make app` stops with an error if the two differ.
 
-GitHub Actions builds and tests the app on every push to `main` and on every pull request. When you push a tag that starts with `v`, it also attaches `WaitList.zip` to a GitHub Release.
+GitHub Actions builds and tests the app on every push to `main` and on every pull request. It builds universal (`UNIVERSAL=1`), so `WaitList.zip` runs on Apple silicon and Intel. When you push a tag that starts with `v`, it also attaches `WaitList.zip` to a GitHub Release.
 
 ## Development
 
 A few switches help when working on WaitList. They are not needed for normal use. The examples call the binary inside the app bundle, so run `make app` first.
 
-- `WAITLIST_DATA_FILE=<path>` uses a different data file instead of the standard one. The 1.x import is skipped in this mode, so your real data stays untouched.
+- `WAITLIST_DATA_FILE=<path>` uses a different data file instead of the standard one. The 1.x import is skipped in this mode, so your real data stays untouched. The app also uses a separate settings store (`com.cemalpturk.WaitList.debug`), so a test run never changes your real settings.
+- Only one copy of WaitList runs at a time. A second launch prints a message and exits before it touches any data, so run `make stop` first if WaitList is already running. `--snapshot` and `--debug-dump-data` are the exceptions, because they show no UI.
 - `--snapshot <dir>` renders every screen, in light and dark mode, to PNGs in `<dir>` and exits. It uses sample data only. The screenshots in this README come from it.
-- `--debug-add-due-in <seconds> <name>` adds an item that becomes due in that many seconds, then launches the app normally. It lets you test notifications without waiting for days.
+- `--debug-add-due-in <seconds> <name>` adds an item that becomes due in that many seconds, then launches the app normally. It lets you test notifications without waiting for days. A negative number adds an item that is already due. The number can be up to 10 years of seconds either way, and anything larger is rejected.
 - `--debug-dump-data` prints the items in the data file as JSON and exits.
 
 ```bash
@@ -186,7 +195,7 @@ WL=build/WaitList.app/Contents/MacOS/WaitList
 # Render every screen to build/snapshots
 $WL --snapshot build/snapshots
 
-# Test a notification against a throwaway data file
+# Test a notification against a throwaway data file (quit a running WaitList first)
 WAITLIST_DATA_FILE=build/test.json $WL --debug-add-due-in 30 "Test item"
 
 # Look at what that file contains
