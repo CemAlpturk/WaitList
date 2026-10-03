@@ -12,6 +12,7 @@ enum Snapshotter {
         case listHistory = "list-history"
         case listEmpty = "list-empty"
         case listError = "list-error"
+        case listUndo = "list-undo"
         case add = "add"
         case addCustom = "add-custom"
         case edit = "edit"
@@ -49,18 +50,29 @@ enum Snapshotter {
                                to url: URL) throws {
         let calendar = Calendar.current
         let now = SampleData.referenceNow(calendar: calendar)
+        // Every scenario starts from factory settings (default wait 14 days, etc.).
+        SampleData.reset(defaults)
         let settings = AppSettings(defaults: defaults)
         defaults.set(scenario == .listHistory || scenario == .listFullTall, forKey: "historyExpanded")
 
         let store: ItemStore
         var screen = Screen.list
         var services = AppServices.preview(dataFileURL: sampleDataFileURL)
+        var initialDecision: RecentDecision?
         switch scenario {
         case .listFull, .listFullTall, .add, .addCustom:
             store = SampleData.store(.full, settings: settings, now: now, calendar: calendar)
             if scenario == .add || scenario == .addCustom { screen = .add(editing: nil) }
             // A default that is not a preset opens the add screen on "Custom".
-            settings.defaultWaitDays = scenario == .addCustom ? 21 : 14
+            if scenario == .addCustom { settings.defaultWaitDays = 21 }
+        case .listUndo:
+            // Just skipped the first due item: the toast offers undo.
+            store = SampleData.store(.full, settings: settings, now: now, calendar: calendar)
+            if let item = store.due.first {
+                store.decide(item.id, .skipped)
+                initialDecision = RecentDecision(itemID: item.id, name: item.name, price: item.price,
+                                                 outcome: .skipped)
+            }
         case .listWaitingOnly:
             store = SampleData.store(.waitingOnly, settings: settings, now: now, calendar: calendar)
         case .listHistory:
@@ -82,7 +94,7 @@ enum Snapshotter {
 
         let router = Router(screen: screen)
         let size = scenario.size
-        let root = RootView(size: size)
+        let root = RootView(size: size, initialDecision: initialDecision)
             .waitListEnvironment(store: store, settings: settings, services: services, router: router)
             .defaultAppStorage(defaults)
             .background(Color(nsColor: .windowBackgroundColor))

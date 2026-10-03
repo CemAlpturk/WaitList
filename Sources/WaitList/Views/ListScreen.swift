@@ -13,6 +13,11 @@ struct ListScreen: View {
     @State private var confirmingClearHistory = false
     @State private var recentDecision: RecentDecision?
 
+    /// `initialDecision` shows the undo toast right away (snapshots).
+    init(initialDecision: RecentDecision? = nil) {
+        _recentDecision = State(initialValue: initialDecision)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -33,23 +38,27 @@ struct ListScreen: View {
         ) { item in
             Button("Delete", role: .destructive) { delete(item) }
             Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("You haven't decided on it yet. This can't be undone.")
+        } message: { item in
+            if item.isDecided {
+                Text("It's removed from your history and your saved and spent totals. This can't be undone.")
+            } else {
+                Text("You haven't decided on it yet. This can't be undone.")
+            }
         }
-        .confirmationDialog("Clear history?", isPresented: $confirmingClearHistory, titleVisibility: .visible) {
+        .confirmationDialog("Clear History?", isPresented: $confirmingClearHistory, titleVisibility: .visible) {
             Button("Clear History", role: .destructive) {
                 withAnimation(.snappy) { store.clearHistory() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes \(store.history.count) decided items. Your saved and spent totals start over.")
+            Text("This removes ^[\(store.history.count) decided item](inflect: true). Your saved and spent totals start over.")
         }
     }
 
     // MARK: Header and banners
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 4) {
             Text("WaitList")
                 .font(.headline)
             Spacer()
@@ -57,22 +66,17 @@ struct ListScreen: View {
                 router.show(.settings)
             } label: {
                 Image(systemName: "gearshape")
+                    .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
             .keyboardShortcut(",", modifiers: .command)
             .help("Settings (⌘,)")
             .accessibilityLabel("Settings")
-            Button(action: showAdd) {
-                Image(systemName: "plus")
-                    .contentShape(Rectangle())
-            }
-            .keyboardShortcut("n", modifiers: .command)
-            .help("Add item (⌘N)")
-            .accessibilityLabel("Add item")
         }
         .buttonStyle(.borderless)
         .font(.system(size: 14, weight: .medium))
-        .padding(.horizontal, 14)
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
         .frame(height: 44)
     }
 
@@ -121,7 +125,7 @@ struct ListScreen: View {
                     }
                 }
                 if due.isEmpty && waiting.isEmpty {
-                    nothingWaiting
+                    allDecided
                 }
                 if !store.history.isEmpty {
                     history
@@ -140,6 +144,8 @@ struct ListScreen: View {
                 .padding(.bottom, 10)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .task(id: recentDecision.id) {
+                    AccessibilityNotification.Announcement(recentDecision.announcement(currencyCode: settings.currencyCode))
+                        .post()
                     try? await Task.sleep(for: .seconds(6))
                     guard !Task.isCancelled else { return }
                     withAnimation(.snappy) { self.recentDecision = nil }
@@ -158,17 +164,19 @@ struct ListScreen: View {
     }
 
     /// Shown when there is history but nothing undecided.
-    private var nothingWaiting: some View {
+    private var allDecided: some View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.circle")
                 .font(.title2)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Nothing waiting")
+                Text("All decided")
                     .font(.body.weight(.medium))
-                Text("Tempted by something? Add it and decide later.")
-                    .font(.caption)
+                Text(addPrompt)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
@@ -186,7 +194,7 @@ struct ListScreen: View {
                     }
                 }
                 .card()
-                Button("Clear history…") { confirmingClearHistory = true }
+                Button("Clear History…") { confirmingClearHistory = true }
                     .buttonStyle(.borderless)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -200,15 +208,24 @@ struct ListScreen: View {
 
     // MARK: Empty state and footer
 
+    /// How WaitList works, in one line, for the empty and all-decided states.
+    private var addPrompt: String {
+        // A no-break space keeps "14 days" on one line.
+        let days = Format.days(settings.defaultWaitDays).replacingOccurrences(of: " ", with: "\u{00A0}")
+        return "Add something you're tempted to buy. In \(days), WaitList asks if you still want it."
+    }
+
     private var emptyState: some View {
         ContentUnavailableView {
             Label("Nothing waiting", systemImage: "hourglass")
         } description: {
-            Text("Want something? Add it here and decide later with a clear head.")
+            Text(addPrompt)
         } actions: {
-            Button("Add item", action: showAdd)
+            Button("Add Item", action: showAdd)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .keyboardShortcut("n", modifiers: .command)
+                .help("Add Item (⌘N)")
         }
         .frame(maxHeight: .infinity)
     }
@@ -216,16 +233,20 @@ struct ListScreen: View {
     private var footer: some View {
         HStack {
             Button(action: showAdd) {
-                Label("Add item", systemImage: "plus")
+                Label("Add Item", systemImage: "plus")
             }
             .buttonStyle(.borderedProminent)
+            .keyboardShortcut("n", modifiers: .command)
+            .help("Add Item (⌘N)")
             Spacer()
-            let count = store.waiting.count
-            if count > 0 {
-                Text("\(count) waiting")
-                    .font(.caption)
+            let saved = store.totalSaved
+            if saved > 0 {
+                Text("Saved \(Format.price(saved, currencyCode: settings.currencyCode))")
+                    .font(.callout.weight(.semibold))
                     .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.saved)
+                    .lineLimit(1)
+                    .help("What you didn't spend by skipping")
             }
         }
         .padding(.horizontal, 12)
@@ -241,15 +262,12 @@ struct ListScreen: View {
                 withAnimation(.snappy) { store.extend(item.id, byDays: NotificationPlan.extendDays) }
             },
             edit: { item in router.show(.add(editing: item)) },
-            delete: { item in
-                if item.isDecided {
-                    delete(item)
-                } else {
-                    pendingDelete = item
-                }
-            },
+            delete: { item in pendingDelete = item },
             undo: { item in
-                withAnimation(.snappy) { store.undoDecision(item.id) }
+                withAnimation(.snappy) {
+                    store.undoDecision(item.id)
+                    if recentDecision?.itemID == item.id { recentDecision = nil }
+                }
             })
     }
 
@@ -356,40 +374,62 @@ struct RecentDecision: Equatable {
     let name: String
     let price: Decimal?
     let outcome: Outcome
+
+    /// "1 899 kr saved" for a skipped item with a price, otherwise nil.
+    func savedText(currencyCode: String) -> String? {
+        guard outcome == .skipped, let price, price > 0 else { return nil }
+        return "\(Format.price(price, currencyCode: currencyCode)) saved"
+    }
+
+    /// What VoiceOver says when the toast appears.
+    func announcement(currencyCode: String) -> String {
+        let verb = outcome == .skipped ? "Skipped" : "Bought"
+        let saved = savedText(currencyCode: currencyCode).map { ", \($0)" } ?? ""
+        return "\(verb) \(name)\(saved). Undo with Command-Z."
+    }
 }
 
+/// "Skipped “Mechanical keyboard”" over "1 899 kr saved", with Undo. Only the name truncates.
 private struct DecisionToast: View {
     let decision: RecentDecision
     let onUndo: () -> Void
     @Environment(AppSettings.self) private var settings
 
-    private var message: String {
-        switch decision.outcome {
-        case .skipped:
-            if let price = decision.price, price > 0 {
-                return "Skipped. \(Format.price(price, currencyCode: settings.currencyCode)) not spent."
-            }
-            return "Skipped. Nice."
-        case .bought:
-            return "Marked as bought. Enjoy it."
-        }
-    }
-
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: decision.outcome == .skipped ? "checkmark.circle.fill" : "bag.fill")
                 .foregroundStyle(decision.outcome == .skipped ? Color.saved : Color.spent)
-            Text(message)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                // The quotes stay visible when a long name truncates.
+                HStack(spacing: 0) {
+                    Text(decision.outcome == .skipped ? "Skipped “" : "Bought “")
+                        .fixedSize()
+                    Text(decision.name)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text("”")
+                        .fixedSize()
+                }
                 .font(.callout)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                if let saved = decision.savedText(currencyCode: settings.currencyCode) {
+                    Text(saved)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Color.saved)
+                        .lineLimit(1)
+                }
+            }
+            .accessibilityElement(children: .combine)
             Spacer(minLength: 4)
             Button("Undo", action: onUndo)
                 .buttonStyle(.borderless)
                 .font(.callout.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .keyboardShortcut("z", modifiers: .command)
+                .help("Undo (⌘Z)")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
             .strokeBorder(Color.cardBorder.opacity(0.6), lineWidth: 0.5))

@@ -12,8 +12,6 @@ struct AddItemScreen: View {
         case custom
     }
 
-    private static let presets = [7, 14, 30, 90]
-
     let editing: Item?
 
     @Environment(ItemStore.self) private var store
@@ -32,7 +30,7 @@ struct AddItemScreen: View {
         _name = State(initialValue: editing?.name ?? "")
         _priceText = State(initialValue: editing?.price.map(Format.editablePrice) ?? "")
         _note = State(initialValue: editing?.note ?? "")
-        _waitChoice = State(initialValue: Self.presets.contains(defaultWaitDays) ? .preset(defaultWaitDays) : .custom)
+        _waitChoice = State(initialValue: WaitPresets.days.contains(defaultWaitDays) ? .preset(defaultWaitDays) : .custom)
         _customDaysText = State(initialValue: String(defaultWaitDays))
     }
 
@@ -83,9 +81,7 @@ struct AddItemScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScreenHeader(title: isEditing ? "Edit item" : "Add item", backTitle: "Cancel", showsChevron: false) {
-                router.show(.list)
-            }
+            ScreenHeader(title: isEditing ? "Edit Item" : "Add Item")
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -107,10 +103,12 @@ struct AddItemScreen: View {
                         }
                     }
                     FormField(label: "Note or link") {
-                        TextField("Note or link", text: $note, prompt: Text("Why you want it, or a link"))
+                        TextField("Note or link", text: $note, prompt: Text("Why you want it, or a link"),
+                                  axis: .vertical)
+                            .lineLimit(1...3)
                             .labelsHidden()
-                            .textFieldStyle(.roundedBorder)
                             .focused($focus, equals: .note)
+                            .multilineFieldStyle(isFocused: focus == .note)
                     }
                     if !isEditing {
                         waitSection
@@ -123,8 +121,11 @@ struct AddItemScreen: View {
                 .animation(.snappy(duration: 0.2), value: priceProblem)
             }
             Divider()
-            HStack {
+            HStack(spacing: 8) {
                 Spacer()
+                Button("Cancel") { router.show(.list) }
+                    .keyboardShortcut(.cancelAction)
+                    .help("Cancel (Esc)")
                 Button(isEditing ? "Save" : "Add to WaitList", action: save)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
@@ -142,13 +143,18 @@ struct AddItemScreen: View {
                   message: waitDays == nil ? "Choose between 1 and 365 days." : nil) {
             VStack(alignment: .leading, spacing: 10) {
                 Picker("Wait", selection: $waitChoice) {
-                    ForEach(Self.presets, id: \.self) { days in
+                    ForEach(WaitPresets.days, id: \.self) { days in
                         Text("\(days) days").tag(WaitChoice.preset(days))
                     }
                     Text("Custom").tag(WaitChoice.custom)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .onChange(of: waitChoice) { _, choice in
+                    guard choice == .custom else { return }
+                    // The days field is inserted by this change; focus it once it is in the hierarchy.
+                    DispatchQueue.main.async { focus = .customDays }
+                }
 
                 if waitChoice == .custom {
                     HStack(spacing: 6) {

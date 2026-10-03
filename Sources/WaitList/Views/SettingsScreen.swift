@@ -16,55 +16,39 @@ struct SettingsScreen: View {
     var body: some View {
         @Bindable var settings = settings
         VStack(spacing: 0) {
-            ScreenHeader(title: "Settings", backTitle: "Back") {
-                router.show(.list)
-            }
+            ScreenHeader(title: "Settings", onBack: { router.show(.list) })
             Divider()
             Form {
-                Section("Waiting") {
-                    LabeledContent("Default wait") {
-                        HStack(spacing: 6) {
-                            Text(Format.days(settings.defaultWaitDays))
-                                .monospacedDigit()
-                            Stepper("Default wait", value: $settings.defaultWaitDays, in: Scheduling.waitDaysRange)
-                                .labelsHidden()
+                Section("General") {
+                    Picker("Default wait", selection: $settings.defaultWaitDays) {
+                        ForEach(defaultWaitOptions, id: \.self) { days in
+                            Text(Format.days(days)).tag(days)
                         }
                     }
-                }
 
-                Section {
-                    DatePicker("Reminder time", selection: reminderTime, displayedComponents: .hourAndMinute)
-                    LabeledContent("Notifications") {
-                        Text(permissionText)
-                            .foregroundStyle(permission == .denied ? Color.orange : Color.secondary)
-                    }
-                    if permission == .denied {
-                        Button("Open System Settings") { services.openNotificationSettings() }
-                    }
-                } header: {
-                    Text("Reminder")
-                } footer: {
-                    Text("Items become ready to decide at this time. Changing it moves upcoming decisions too.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                Section("Currency") {
                     Picker("Currency", selection: $settings.currencyCode) {
-                        ForEach(currencyOptions, id: \.code) { option in
+                        let options = currencyOptions
+                        ForEach(options.preferred, id: \.code) { option in
+                            Text(option.label).tag(option.code)
+                        }
+                        if !options.preferred.isEmpty {
+                            Divider()
+                        }
+                        ForEach(options.others, id: \.code) { option in
                             Text(option.label).tag(option.code)
                         }
                     }
+                    // No row label, so long names ("BAM – Bosnia-Herzegovina Convertible Mark") get the
+                    // whole row. The negative padding cancels the pop-up's title inset so the text lines
+                    // up with the other row labels.
+                    .labelsHidden()
+                    .padding(.leading, -11)
                     .onChange(of: settings.currencyCode) {
                         // Notification text includes the price; reschedule with the new currency now.
                         store.refresh()
                     }
-                }
 
-                Section("General") {
-                    Toggle("Launch at login", isOn: launchBinding)
+                    Toggle("Open at Login", isOn: launchBinding)
                     if launchState == .requiresApproval {
                         LabeledContent {
                             Button("Open Login Items") { services.openLoginItemsSettings() }
@@ -82,24 +66,34 @@ struct SettingsScreen: View {
                     }
                 }
 
-                Section("Data") {
-                    LabeledContent {
-                        Button("Show in Finder") { services.revealDataFile() }
-                            .disabled(services.dataFileURL == nil)
-                    } label: {
-                        Text(dataPath)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(services.dataFileURL?.path ?? dataPath)
+                Section {
+                    DatePicker("Reminder time", selection: reminderTime, displayedComponents: .hourAndMinute)
+                    LabeledContent("Notifications") {
+                        Text(permissionText)
+                            .foregroundStyle(permission == .denied ? Color.orange : Color.secondary)
                     }
+                    if permission == .denied {
+                        LabeledContent {
+                            Button("Open System Settings") { services.openNotificationSettings() }
+                        } label: {
+                            Text("Needed for reminders")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("Reminder")
+                } footer: {
+                    Text("Items become ready to decide at this time. Changing it moves upcoming decisions too.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 Section("About") {
                     LabeledContent {
                         Button("Quit WaitList") { services.quit() }
-                            .buttonStyle(.bordered)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("WaitList \(AppInfo.version)")
@@ -108,6 +102,20 @@ struct SettingsScreen: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    LabeledContent {
+                        Button("Show in Finder") { services.revealDataFile() }
+                            .disabled(services.dataFileURL == nil)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Data file")
+                            if services.dataFileURL == nil {
+                                Text("Not saved (memory only)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .help(services.dataFileURL?.path ?? "Not saved (memory only)")
                 }
             }
             .formStyle(.grouped)
@@ -163,20 +171,24 @@ struct SettingsScreen: View {
         switch permission {
         case .allowed: return "Allowed"
         case .denied: return "Not allowed"
-        case .notDetermined: return "Not asked yet"
+        case .notDetermined: return "Not set up"
         case nil: return "…"
         }
     }
 
-    private var dataPath: String {
-        guard let url = services.dataFileURL else { return "Not saved (memory only)" }
-        return (url.path as NSString).abbreviatingWithTildeInPath
+    /// The presets, plus the current value when it is something else (set before presets existed).
+    private var defaultWaitOptions: [Int] {
+        Set(WaitPresets.days + [settings.defaultWaitDays]).sorted()
     }
 
-    private var currencyOptions: [CurrencyOption] {
-        let options = CurrencyOption.common
-        if options.contains(where: { $0.code == settings.currencyCode }) { return options }
-        return (options + [CurrencyOption(code: settings.currencyCode)]).sorted { $0.code < $1.code }
+    /// The region's currency first, then the common ones (plus the current choice if it is unusual).
+    private var currencyOptions: (preferred: [CurrencyOption], others: [CurrencyOption]) {
+        let local = Locale.current.currency?.identifier.uppercased()
+        var others = CurrencyOption.common.filter { $0.code != local }
+        if settings.currencyCode != local, !others.contains(where: { $0.code == settings.currencyCode }) {
+            others = (others + [CurrencyOption(code: settings.currencyCode)]).sorted { $0.code < $1.code }
+        }
+        return (local.map { [CurrencyOption(code: $0)] } ?? [], others)
     }
 }
 

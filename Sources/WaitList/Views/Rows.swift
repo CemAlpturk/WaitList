@@ -6,9 +6,16 @@ struct ItemActions {
     var decide: (Item, Outcome) -> Void
     var extend: (Item) -> Void
     var edit: (Item) -> Void
-    /// Asks for confirmation first if the item is undecided.
+    /// Asks for confirmation first.
     var delete: (Item) -> Void
     var undo: (Item) -> Void
+}
+
+extension Item {
+    /// Tooltip for a row: the full name, then the note when there is one.
+    var tooltip: String {
+        [name, note].compactMap { $0 }.joined(separator: "\n")
+    }
 }
 
 /// Menu items for an undecided item, shared by the `⋯` menu and the context menu.
@@ -19,7 +26,8 @@ struct UndecidedItemMenu: View {
 
     var body: some View {
         if includesDecide {
-            Menu("Decide now") {
+            Menu("Decide Now") {
+                // Same wording as the notification buttons.
                 Button("Skip it") { actions.decide(item, .skipped) }
                 Button("Bought it") { actions.decide(item, .bought) }
             }
@@ -31,9 +39,21 @@ struct UndecidedItemMenu: View {
     }
 }
 
+/// Menu items for a decided item, shared by the `⋯` menu and the context menu.
+struct DecidedItemMenu: View {
+    let item: Item
+    let actions: ItemActions
+
+    var body: some View {
+        Button("Undo Decision") { actions.undo(item) }
+        Divider()
+        Button("Delete…", role: .destructive) { actions.delete(item) }
+    }
+}
+
 // MARK: Ready to decide
 
-/// A due item: what it is, how long it waited, and the two decision buttons.
+/// A due item: what it is, how long it waited, the two decision buttons and a quiet "wait longer".
 struct DueRow: View {
     let item: Item
     let actions: ItemActions
@@ -50,10 +70,11 @@ struct DueRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
                         Text(item.name)
                             .font(.body.weight(.semibold))
                             .lineLimit(2)
+                            .help(item.tooltip)
                         if let url = item.noteURL {
                             LinkButton(url: url)
                         }
@@ -67,7 +88,7 @@ struct DueRow: View {
                         Text(Format.waited(item, now: store.now, calendar: store.calendar))
                             .foregroundStyle(.secondary)
                     }
-                    .font(.caption)
+                    .font(.subheadline)
                     .lineLimit(1)
                     if let plainNote {
                         Text(plainNote)
@@ -83,27 +104,37 @@ struct DueRow: View {
                     UndecidedItemMenu(item: item, actions: actions, includesDecide: false)
                 }
             }
-            HStack(spacing: 8) {
-                Button {
-                    actions.decide(item, .skipped)
-                } label: {
-                    Text("Skip it").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                .help("You don't need it. It goes to your history as money not spent.")
+            VStack(spacing: 4) {
+                HStack(spacing: 8) {
+                    Button {
+                        actions.decide(item, .skipped)
+                    } label: {
+                        Text("Skip it").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.saved)
+                    .help("You don't need it. Its price goes to your history as money saved.")
+                    .accessibilityLabel("Skip \(item.name)")
 
-                Button {
-                    actions.decide(item, .bought)
-                } label: {
-                    Text("Bought it").frame(maxWidth: .infinity)
+                    Button {
+                        actions.decide(item, .bought)
+                    } label: {
+                        Text("Bought it").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .help("You still wanted it and bought it.")
+                    .accessibilityLabel("Bought \(item.name)")
                 }
-                .buttonStyle(.bordered)
-                .help("You still wanted it and bought it.")
+                Button("Not sure? Wait \(NotificationPlan.extendDays) more days") { actions.extend(item) }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .help("Decide again in \(Format.days(NotificationPlan.extendDays)).")
             }
         }
         .padding(10)
-        .card(tint: .saved)
+        .card(tint: Color(nsColor: .systemGreen), tintOpacity: 0.10)
         .contextMenu {
             UndecidedItemMenu(item: item, actions: actions)
         }
@@ -129,11 +160,11 @@ struct WaitingRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(item.name)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .help(item.note ?? item.name)
+                    .help(item.tooltip)
                 if let url = item.noteURL {
                     LinkButton(url: url)
                 }
@@ -152,15 +183,13 @@ struct WaitingRow: View {
             }
             HStack(spacing: 10) {
                 Text(Format.timeLeft(item, now: store.now, calendar: store.calendar))
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .controlSize(.mini)
+                WaitProgressBar(value: progress)
                     .frame(width: 56)
-                    .accessibilityLabel("Waiting progress")
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 10)
@@ -184,17 +213,18 @@ struct HistoryRow: View {
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text(item.name)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .help(item.tooltip)
                     if let url = item.noteURL {
                         LinkButton(url: url)
                     }
                 }
                 if let decidedAt = item.decidedAt {
                     Text(Format.day(decidedAt, now: store.now, calendar: store.calendar))
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -210,15 +240,15 @@ struct HistoryRow: View {
             if let outcome = item.outcome {
                 OutcomeBadge(outcome: outcome)
             }
+            MoreMenu(itemName: item.name) {
+                DecidedItemMenu(item: item, actions: actions)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .contentShape(Rectangle())
-        .help(item.note ?? item.name)
         .contextMenu {
-            Button("Undo decision") { actions.undo(item) }
-            Divider()
-            Button("Delete", role: .destructive) { actions.delete(item) }
+            DecidedItemMenu(item: item, actions: actions)
         }
     }
 }

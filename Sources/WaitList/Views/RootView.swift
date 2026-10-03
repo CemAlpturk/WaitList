@@ -33,6 +33,8 @@ final class Router {
 struct RootView: View {
     /// Fixed so the popover never resizes; snapshots may pass a taller size to review scrolled content.
     var size = StatusItemController.popoverSize
+    /// Shows the list's undo toast for this decision on first appearance (snapshots).
+    var initialDecision: RecentDecision?
 
     @Environment(Router.self) private var router
     @Environment(AppSettings.self) private var settings
@@ -41,7 +43,7 @@ struct RootView: View {
         ZStack {
             switch router.screen {
             case .list:
-                ListScreen()
+                ListScreen(initialDecision: initialDecision)
                     .transition(.slideFade(from: .leading))
             case .add(let editing):
                 AddItemScreen(editing: editing, defaultWaitDays: settings.defaultWaitDays)

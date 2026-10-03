@@ -11,12 +11,22 @@ enum SampleData {
         guard let defaults = UserDefaults(suiteName: defaultsSuiteName) else {
             preconditionFailure("Could not create sample defaults suite")
         }
-        defaults.removePersistentDomain(forName: defaultsSuiteName)
+        reset(defaults)
         return defaults
     }
 
-    static func discard(_ defaults: UserDefaults) {
+    /// Back to factory settings, so one scenario's values never leak into the next.
+    static func reset(_ defaults: UserDefaults) {
         defaults.removePersistentDomain(forName: defaultsSuiteName)
+    }
+
+    /// Wipes the domain and deletes its plist, which `removePersistentDomain` alone leaves behind.
+    static func discard(_ defaults: UserDefaults) {
+        reset(defaults)
+        CFPreferencesAppSynchronize(defaultsSuiteName as CFString)
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(defaultsSuiteName).plist")
+        try? FileManager.default.removeItem(at: plist)
     }
 
     /// Today at 08:15, so "today at 09:00" is still ahead and results do not depend on when snapshots run.
