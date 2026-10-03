@@ -1,1 +1,14 @@
-WaitList.xcodeproj/
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# App bundle output
+build/
+
+# Xcode (if you open the package in Xcode)
+xcuserdata/
+*.xcodeproj/
+DerivedData/
+
+.DS_Store
